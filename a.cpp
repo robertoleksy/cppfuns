@@ -1,4 +1,7 @@
 
+// Copyrighted (C) 2016 by developers of this project, as gift-ware (as in lib allegro 4)
+
+
 #include <allegro.h>
 #include <vector>
 
