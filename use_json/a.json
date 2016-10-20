@@ -1,0 +1,9 @@
+{
+  "my_login": "Radek",
+  "password": "RandomString[20]",
+
+  "address_book": {
+    "Kamil": "asdasd",
+    "Hubert": "rbrbbv"
+  }
+}
