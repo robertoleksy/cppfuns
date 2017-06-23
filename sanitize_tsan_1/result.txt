@@ -1,0 +1,24 @@
+on debian 8 amd64 with added clang 4.0 from clang apt
+
+$ ./go.sh 
+running...
+in PWD=/home/rafalcode/work/cppfuns/sanitize_tsan_1/bin
+in main
+==================
+WARNING: ThreadSanitizer: data race (pid=25320)
+  Write of size 4 at 0x558c4a571c4c by main thread:
+    #0 main /home/rafalcode/work/cppfuns/sanitize_tsan_1/a.cpp:22:10 (a.out+0xc2ce6)
+
+  Previous write of size 4 at 0x558c4a571c4c by thread T2:
+    #0 Thread1(void*) /home/rafalcode/work/cppfuns/sanitize_tsan_1/a.cpp:6:10 (a.out+0xc2b05)
+
+  Location is global 'Global' of size 4 at 0x558c4a571c4c (a.out+0x000001154c4c)
+
+  Thread T2 (tid=25323, finished) created by main thread at:
+    #0 pthread_create <null> (a.out+0x5423b)
+    #1 main /home/rafalcode/work/cppfuns/sanitize_tsan_1/a.cpp:21:3 (a.out+0xc2cde)
+
+SUMMARY: ThreadSanitizer: data race /home/rafalcode/work/cppfuns/sanitize_tsan_1/a.cpp:22:10 in main
+==================
+program is done exit code=66
+

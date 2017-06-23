@@ -1,0 +1,1 @@
+mkdir -p bin/ && clang++-4.0  -fsanitize=undefined -fsanitize=integer -fsanitize=thread -fno-sanitize-recover=thread -g3 -O1 a.cpp -fPIE -pie  && mv a.out bin/ && echo "running..." && ( cd bin/ && echo "in PWD=$PWD" && TSAN_OPTIONS="halt_on_error=1 verbose=2" ./a.out  ; echo "program is done exit code=$?" )
