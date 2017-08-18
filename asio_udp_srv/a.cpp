@@ -1,3 +1,14 @@
+/**
+
+This program - as all codes in this project - is totally experimental, likelly has many bugs and exploits!
+Do not use it.
+
+
+*/
+
+
+
+
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -107,23 +118,26 @@ void asiotest_udpserv() {
 	g_atomic_exit=false;
 
 	asio::io_service ios;
+
 	c_inbuf_tab inbuf_tab(16);
 
-	size_t inbuf_nr = 1;
-	auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
-	_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 	asio::ip::udp::socket mysocket(ios); // active udp
 	_note("bind");
 	mysocket.open( asio::ip::udp::v4() );
 	mysocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
 	asio::ip::udp::endpoint remote_ep;
-	_dbg1("Restarting async read, on mysocket="<<addrvoid(mysocket));
-	mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-		[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-			_dbg1("Handler (FIRST), size="<<bytes_transferred);
-			handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
-		}
-	);
+
+	for (size_t inbuf_nr = 0; inbuf_nr<1; ++inbuf_nr) {
+		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
+		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
+		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
+		mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+			[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+				_dbg1("Handler (FIRST), size="<<bytes_transferred);
+				handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
+			}
+		);
+	}
 
 	std::thread thread_stop(
 		[&ios] {
@@ -139,16 +153,21 @@ void asiotest_udpserv() {
 		}
 	);
 
-	std::thread thread_run(
-		[&ios] {
-			_note("ios run - starting");
-			ios.run();
-			_note("ios run - completed");
-		}
-	);
+	vector<std::thread> thread_run_tab;
 
-	thread_run.join();
+	for (int ios_thread=0; ios_thread<1; ++ios_thread) {
+		std::thread thread_run(
+			[&ios, ios_thread] {
+				_note("ios run (ios_thread="<<ios_thread<<" - starting");
+				ios.run();
+				_note("ios run (ios_thread="<<ios_thread<<" - COMPLETE");
+			}
+		);
+		thread_run_tab.push_back( std::move( thread_run ) );
+	}
+
 	thread_stop.join();
+	for (auto & thr : thread_run_tab) thr.join();
 
 }
 
