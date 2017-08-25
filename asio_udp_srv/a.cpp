@@ -20,14 +20,18 @@ Do not use it.
 #include <chrono>
 #include <atomic>
 
-#if 1
+#if 0
+#define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
 #define _mark(X) _note(X);
+#define _goal(X) _note(X);
 #else
+#define _dbg4(X) {}
 #define _dbg1(X) {}
 #define _note(X) {}
 #define _mark(X) {}
+#define _goal(X) _note(X);
 #endif
 
 #define UsePtr(X) (* (X) )
@@ -77,6 +81,12 @@ t_inbuf & c_inbuf_tab::get(size_t ix) {
 	return * m_inbufs.at(ix) ;
 }
 
+void handler_signal_term(const boost::system::error_code& error , int signal_number)
+{
+	_note("Signal! (control-C?) " << signal_number);
+	g_atomic_exit = true;
+}
+
 void handler_receive(const boost::system::error_code & ec, std::size_t bytes_transferred,
 	asio::ip::udp::socket & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr)
@@ -86,11 +96,12 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 		return;
 	}
 
-	_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab) );
 	auto & inbuf = inbuf_tab.get(inbuf_nr);
-	_note("inbuf is at " << static_cast<void*>( & inbuf) );
-	_note("got data from remote " << inbuf.m_ep << " bytes_transferred="<<bytes_transferred );
-	_note("read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]");
+	_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab)
+		<< " inbuf at " << static_cast<void*>( & inbuf)
+		<< " from remote IP " << inbuf.m_ep << " bytes_transferred="<<bytes_transferred
+		<< " read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]"
+	);
 	static const char * marker = "exit";
 	static const size_t marker_len = strlen(marker);
 	if (std::strncmp( &inbuf.m_data[0] , marker , std::min(bytes_transferred,marker_len) )==0) {
@@ -102,9 +113,19 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 
 	char* inbuf_data = & inbuf.m_data[0] ;
 	auto inbuf_asio = asio::buffer( inbuf_data  , std::extent<decltype(inbuf.m_data)>::value );
-	_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
+	assert( asio::buffer_size( inbuf_asio ) > 0 );
+	_dbg4("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 
-	_dbg1("Restarting async read, on mysocket="<<addrvoid(mysocket));
+	unsigned char bbb=0;
+	for (int j=0; j<100; ++j) {
+		unsigned char aaa=0;
+			for (size_t pos=0; pos<bytes_transferred; ++pos) {
+			aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ];
+		}
+		bbb ^= aaa;
+	}
+
+	_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
 	mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 		[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred_again) {
 			_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
@@ -119,26 +140,29 @@ void asiotest_udpserv() {
 
 	asio::io_service ios;
 
-	c_inbuf_tab inbuf_tab(16);
+	// TODO XXX
+	_goal("WARNING this is NOT THREAD SAFE (race on the socket accsssed from handlers across different handler-flows");
+	const int cfg_num_inbuf = 16;
+	const int cfg_num_thread_per_ios = 16;
 
-	asio::ip::udp::socket mysocket(ios); // active udp
-	_note("bind");
-	mysocket.open( asio::ip::udp::v4() );
-	mysocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
-	asio::ip::udp::endpoint remote_ep;
+	// have any long-term work to do (for ios)
+	boost::asio::signal_set signals(ios, SIGINT);
+	signals.async_wait( handler_signal_term );
 
-	for (size_t inbuf_nr = 0; inbuf_nr<1; ++inbuf_nr) {
-		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
-		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
-		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
-		mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-				_dbg1("Handler (FIRST), size="<<bytes_transferred);
-				handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
+	_note("Starting ios run"); // ios.run()
+	vector<std::thread> thread_run_tab;
+	for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
+		std::thread thread_run(
+			[&ios, ios_thread] {
+				_note("ios run (ios_thread="<<ios_thread<<" - starting");
+				ios.run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+				_note("ios run (ios_thread="<<ios_thread<<" - COMPLETE");
 			}
 		);
+		thread_run_tab.push_back( std::move( thread_run ) );
 	}
 
+	_dbg1("The stop thread"); // exit flag --> ios.stop()
 	std::thread thread_stop(
 		[&ios] {
 			for (int i=0; true; ++i) {
@@ -153,21 +177,32 @@ void asiotest_udpserv() {
 		}
 	);
 
-	vector<std::thread> thread_run_tab;
+	c_inbuf_tab inbuf_tab(16);
 
-	for (int ios_thread=0; ios_thread<1; ++ios_thread) {
-		std::thread thread_run(
-			[&ios, ios_thread] {
-				_note("ios run (ios_thread="<<ios_thread<<" - starting");
-				ios.run();
-				_note("ios run (ios_thread="<<ios_thread<<" - COMPLETE");
+	asio::ip::udp::socket mysocket(ios); // active udp
+	_note("bind");
+	mysocket.open( asio::ip::udp::v4() );
+	mysocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
+	asio::ip::udp::endpoint remote_ep;
+
+	// add first work - handler-flow
+	for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
+		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
+		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
+		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
+		mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+			[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+				_dbg1("Handler (FIRST), size="<<bytes_transferred);
+				handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
 			}
 		);
-		thread_run_tab.push_back( std::move( thread_run ) );
 	}
 
+
 	thread_stop.join();
-	for (auto & thr : thread_run_tab) thr.join();
+	for (auto & thr : thread_run_tab) {
+		thr.join();
+	}
 
 }
 
@@ -234,5 +269,7 @@ void asiotest()
 
 int main() {
 	asiotest();
+	_note("Normal exit");
+	return 0;
 }
 
