@@ -25,14 +25,14 @@ Do not use it.
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
 #define _mark(X) _note(X);
-#define _goal(X) _note(X);
 #else
 #define _dbg4(X) {}
 #define _dbg1(X) {}
 #define _note(X) {}
 #define _mark(X) {}
-#define _goal(X) _note(X);
 #endif
+
+#define _goal(X) { std::cout<<X<<std::endl; }
 
 #define UsePtr(X) (* (X) )
 #define addrvoid(X) ( static_cast<const void*>( & (X) ) )
@@ -41,6 +41,24 @@ using namespace boost;
 using std::vector;
 using std::unique_ptr;
 using std::make_unique;
+
+template <typename T>
+class ThreadObject {
+	public:
+		template<typename... Args> ThreadObject(Args&&... args) : m_obj(std::forward<Args>(args)...) {}
+
+		T & get() { m_test_data = (m_test_data+1) % 255; return m_obj; }
+		const T & get() const { m_test_data = (m_test_data+1) % 255; return m_obj; }
+
+		int get_test_data() { return m_test_data; }
+
+	private:
+		T m_obj;
+		int m_test_data; ///< write to this to cause (expose) a race condition
+
+		void init_this_object() { m_test_data=0; }
+};
+
 
 std::atomic<bool> g_atomic_exit;
 
@@ -83,12 +101,12 @@ t_inbuf & c_inbuf_tab::get(size_t ix) {
 
 void handler_signal_term(const boost::system::error_code& error , int signal_number)
 {
-	_note("Signal! (control-C?) " << signal_number);
+	_goal("Signal! (control-C?) " << signal_number);
 	g_atomic_exit = true;
 }
 
 void handler_receive(const boost::system::error_code & ec, std::size_t bytes_transferred,
-	asio::ip::udp::socket & mysocket,
+	ThreadObject<asio::ip::udp::socket> & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr)
 {
 	if (!! ec) {
@@ -126,7 +144,7 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 	}
 
 	_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
-	mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+	mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 		[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred_again) {
 			_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
 			handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr);
@@ -179,10 +197,10 @@ void asiotest_udpserv() {
 
 	c_inbuf_tab inbuf_tab(16);
 
-	asio::ip::udp::socket mysocket(ios); // active udp
+	ThreadObject<asio::ip::udp::socket> mysocket(ios); // active udp
 	_note("bind");
-	mysocket.open( asio::ip::udp::v4() );
-	mysocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
+	mysocket.get().open( asio::ip::udp::v4() );
+	mysocket.get().bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
 	asio::ip::udp::endpoint remote_ep;
 
 	// add first work - handler-flow
@@ -190,7 +208,7 @@ void asiotest_udpserv() {
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
 		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
-		mysocket.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+		mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 			[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 				_dbg1("Handler (FIRST), size="<<bytes_transferred);
 				handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
@@ -269,7 +287,7 @@ void asiotest()
 
 int main() {
 	asiotest();
-	_note("Normal exit");
+	_goal("Normal exit");
 	return 0;
 }
 
