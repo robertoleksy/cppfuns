@@ -19,6 +19,7 @@ Do not use it.
 #include <iostream>
 #include <chrono>
 #include <atomic>
+#include <mutex>
 
 #if 0
 #define _dbg4(X) {}
@@ -107,7 +108,8 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 
 void handler_receive(const boost::system::error_code & ec, std::size_t bytes_transferred,
 	ThreadObject<asio::ip::udp::socket> & mysocket,
-	c_inbuf_tab & inbuf_tab, size_t inbuf_nr)
+	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
+	std::mutex & mutex_handlerflow_socket)
 {
 	if (!! ec) {
 		_note("Handler hit error, ec="<<ec.message());
@@ -144,12 +146,15 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 	}
 
 	_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
-	mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-		[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred_again) {
-			_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
-			handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr);
-		}
-	);
+	{
+		std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
+		mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again) {
+				_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
+				handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+			}
+		);
+	}
 	_dbg1("Restarting async read - done");
 }
 
@@ -203,17 +208,22 @@ void asiotest_udpserv() {
 	mysocket.get().bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
 	asio::ip::udp::endpoint remote_ep;
 
+	std::mutex mutex_handlerflow_socket;
+
 	// add first work - handler-flow
 	for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
 		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
-		mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			[&mysocket, &inbuf_tab , inbuf_nr](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-				_dbg1("Handler (FIRST), size="<<bytes_transferred);
-				handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr);
-			}
-		);
+		{
+			std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
+			mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+				[&mysocket, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+					_dbg1("Handler (FIRST), size="<<bytes_transferred);
+					handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+				}
+			);
+		}
 	}
 
 
