@@ -60,8 +60,42 @@ class ThreadObject {
 		void init_this_object() { m_test_data=0; }
 };
 
+template <typename T>
+class with_strand {
+	public:
+		template<typename... Args> with_strand(boost::asio::io_service & ios, Args&&... args)
+			: m_obj(std::forward<Args>(args)...) , m_strand(ios) {}
+
+		/**
+			* Acccess the object #m_obj
+			* @warning the caller guarantees that he is calling from a strand (this functin does NOT assert that),
+			* it is UB in other case
+			*/
+		T & get_unsafe_assume_in_strand() { return m_obj; }
+		const T & get_unsafe_assume_in_strand() const { return m_obj; }
+
+		template <typename Lambda> auto wrap(Lambda && lambda) {
+			return m_strand.wrap( std::move(lambda) );
+		}
+
+	private:
+		T m_obj;
+		asio::strand m_strand;
+};
+
 
 std::atomic<bool> g_atomic_exit;
+std::atomic<long int> g_recv_totall_count;
+std::atomic<long int> g_recv_totall_size;
+
+struct t_mytime {
+	using t_timevalue = std::chrono::time_point<std::chrono::steady_clock>;
+	t_timevalue m_time;
+	t_mytime() noexcept { }
+	t_mytime(std::chrono::time_point<std::chrono::steady_clock> time_) noexcept { m_time = time_; }
+};
+
+std::atomic<t_mytime> g_recv_started;
 
 struct t_inbuf {
 	char m_data[1024];
@@ -107,7 +141,7 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 }
 
 void handler_receive(const boost::system::error_code & ec, std::size_t bytes_transferred,
-	ThreadObject<asio::ip::udp::socket> & mysocket,
+	with_strand< ThreadObject<asio::ip::udp::socket> > & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
 	std::mutex & mutex_handlerflow_socket)
 {
@@ -122,8 +156,18 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 		<< " from remote IP " << inbuf.m_ep << " bytes_transferred="<<bytes_transferred
 		<< " read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]"
 	);
+	++ g_recv_totall_count;
+	g_recv_totall_size += bytes_transferred;
 	static const char * marker = "exit";
 	static const size_t marker_len = strlen(marker);
+
+	t_mytime time_now( std::chrono::steady_clock::now() );
+	t_mytime time_zero;
+	g_recv_started.compare_exchange_strong(
+		time_zero,
+		time_now
+	);
+
 	if (std::strncmp( &inbuf.m_data[0] , marker , std::min(bytes_transferred,marker_len) )==0) {
 		if (bytes_transferred == marker_len) {
 			_note("Message is EXIT, will exit");
@@ -136,23 +180,34 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 	assert( asio::buffer_size( inbuf_asio ) > 0 );
 	_dbg4("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 
+	// fake "decrypt/encrypt" operation
 	unsigned char bbb=0;
-	for (int j=0; j<100; ++j) {
-		unsigned char aaa=0;
+	for (unsigned int j=0; j<10; ++j) {
+		unsigned char aaa = j%5;
 			for (size_t pos=0; pos<bytes_transferred; ++pos) {
-			aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ];
+			aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
 		}
 		bbb ^= aaa;
 	}
+	auto volatile rrr = bbb;
+	if (rrr==0) _note("rrr="<<rrr);
+
+	// ---
 
 	_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
 	{
-		std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
-		mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again) {
-				_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
-				handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
-			}
+		// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
+
+		mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
+			.get()
+			.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+			mysocket.wrap(
+				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
+				{
+					_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
+					handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+				}
+			)
 		);
 	}
 	_dbg1("Restarting async read - done");
@@ -160,6 +215,9 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 
 void asiotest_udpserv() {
 	g_atomic_exit=false;
+	g_recv_totall_count=0;
+	g_recv_totall_size=0;
+	g_recv_started = t_mytime{};
 
 	asio::io_service ios;
 
@@ -190,7 +248,14 @@ void asiotest_udpserv() {
 		[&ios] {
 			for (int i=0; true; ++i) {
 				std::this_thread::sleep_for( std::chrono::seconds(1) );
-				_note("Waiting, i="<<i);
+
+				auto time_now = std::chrono::steady_clock::now();
+				auto now_recv_totall_size = g_recv_totall_size.load();
+				double now_recv_ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - g_recv_started.load().m_time) ).count() / 1000.;
+				double now_recv_speed = now_recv_totall_size / now_recv_ellapsed_sec; // B/s
+				_goal("Waiting, i="<<i<<" so far recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
+					<< " speed="<< (now_recv_speed/1000000) <<" MB/s"
+				);
 				if (g_atomic_exit) {
 					_note("Exit flag is set, exiting loop and will stop program");
 					break;
@@ -202,10 +267,10 @@ void asiotest_udpserv() {
 
 	c_inbuf_tab inbuf_tab(16);
 
-	ThreadObject<asio::ip::udp::socket> mysocket(ios); // active udp
+	with_strand<ThreadObject<asio::ip::udp::socket>> mysocket_in_strand(ios,ios); // active udp
 	_note("bind");
-	mysocket.get().open( asio::ip::udp::v4() );
-	mysocket.get().bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
+	mysocket_in_strand.get_unsafe_assume_in_strand().get().open( asio::ip::udp::v4() );
+	mysocket_in_strand.get_unsafe_assume_in_strand().get().bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
 	asio::ip::udp::endpoint remote_ep;
 
 	std::mutex mutex_handlerflow_socket;
@@ -214,15 +279,17 @@ void asiotest_udpserv() {
 	for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
 		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
-		_dbg1("async read, on mysocket="<<addrvoid(mysocket));
+		_dbg1("async read, on mysocket="<<addrvoid(mysocket_in_strand));
 		{
-			std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
-			mysocket.get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-				[&mysocket, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-					_dbg1("Handler (FIRST), size="<<bytes_transferred);
-					handler_receive(ec,bytes_transferred, mysocket,inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
-				}
-			);
+			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
+			mysocket_in_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+				mysocket_in_strand.wrap(
+					[&mysocket_in_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+						_dbg1("Handler (FIRST), size="<<bytes_transferred);
+						handler_receive(ec,bytes_transferred, mysocket_in_strand,inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+					}
+				)
+			); // start async
 		}
 	}
 
