@@ -55,7 +55,7 @@ class ThreadObject {
 
 	private:
 		T m_obj;
-		int m_test_data; ///< write to this to cause (expose) a race condition
+		volatile int m_test_data; ///< write to this to cause (expose) a race condition
 
 		void init_this_object() { m_test_data=0; }
 };
