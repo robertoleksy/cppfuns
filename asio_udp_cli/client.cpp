@@ -23,16 +23,24 @@ int main(int argc, char *argv[])
 	udp::resolver resolver(io_service);
 	udp::endpoint endpoint = *resolver.resolve({udp::v4(), host, port});
 
+	std::cout<<"Usage example: give command:"
+		<< "foo 0 1    - this will send text foo (1 time)" << std::endl
+		<< "abc 50 1000   - this will send message of letter 'a' repeated 50 times. This msg will be sent 1000 times."
+		<<std::endl;
+
+	std::cout << std::endl;
+
 	while(true){
 		char request[max_length];
 		size_t bytes, count, request_length;
-		std::cout << "message ,bytes (if bytes==1 send message else send first byte multipled by bytes) and count: ";
+		std::cout << "Enter: message bytes count";
+		std::cout << std::endl << "-> ";
 		std::cin >> request >> bytes >> count;
 		if (bytes > max_length) {
 			std::cout << "too long message" << std::endl;
 			continue;
 		}
-		if (bytes == 1)
+		if (bytes == 0)
 			request_length = std::strlen(request);
 		else {
 			request_length = bytes;
