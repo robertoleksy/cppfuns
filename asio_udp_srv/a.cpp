@@ -142,8 +142,8 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 }
 
 enum class e_algo_receive {
-	first_read, next_read, // handler when we got the date -, need to read it and use it, decrypt it
-	restart_read, // handler when we are now ordered to restart the read
+	after_first_read, after_next_read, // handler when we got the date -, need to read it and use it, decrypt it
+	after_processing_done, // handler when we are now ordered to restart the read
 };
 
 void handler_receive(const e_algo_receive algo_step, const boost::system::error_code & ec, std::size_t bytes_transferred,
@@ -163,7 +163,7 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		<< " read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]"
 	);
 
-	if ((algo_step==e_algo_receive::first_read) || (algo_step==e_algo_receive::next_read)) {
+	if ((algo_step==e_algo_receive::after_first_read) || (algo_step==e_algo_receive::after_next_read)) {
 		++ g_recv_totall_count;
 		g_recv_totall_size += bytes_transferred;
 		static const char * marker = "exit";
@@ -196,17 +196,19 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
 
 		mysocket.get_strand().post(
+			mysocket.wrap(
 			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
 			{
 				_dbg1("Handler (restart read)");
-				handler_receive(e_algo_receive::restart_read, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+				handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 			}
+			)
 		);
 	} // first_read or next_read
 
 	// ---
 
-	else if (algo_step==e_algo_receive::restart_read) {
+	else if (algo_step==e_algo_receive::after_processing_done) {
 		_dbg1("Restarting async read, on mysocket="<<addrvoid(mysocket));
 		// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
 
@@ -219,13 +221,11 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
 			.get()
 			.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			mysocket.wrap(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
 				{
 					_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
-					handler_receive(e_algo_receive::next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+					handler_receive(e_algo_receive::after_next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 				}
-			)
 		);
 		_dbg1("Restarting async read - done");
 	} // restart_read
@@ -334,12 +334,10 @@ void asiotest_udpserv() {
 			auto & this_socket_and_strand = mysocket_in_strand.at(socket_nr);
 
 			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-				this_socket_and_strand.wrap(
 					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 					}
-				)
 			); // start async
 		}
 	} ;
