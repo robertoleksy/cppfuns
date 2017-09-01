@@ -246,30 +246,37 @@ void asiotest_udpserv() {
 	g_recv_totall_size=0;
 	g_recv_started = t_mytime{};
 
-	asio::io_service ios;
 
-	const int cfg_num_inbuf = 128;
-	const int cfg_num_socket = 4;
+	const int cfg_num_inbuf = 32; // this is also the number of flows
+	const int cfg_num_socket = 1;
 	const int cfg_buf_socket_spread = 1; // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
-	const int cfg_num_ios = 1; // TODO
-	const int cfg_num_thread_per_ios = 128;
+	const int cfg_num_ios = 4;
+	const int cfg_num_thread_per_ios = 16;
+
+	std::vector<std::unique_ptr<asio::io_service>> ios;
+	for (int i=0; i<cfg_num_ios; ++i) {
+		_goal("Creating ios "<<cfg_num_ios);
+		ios.emplace_back( std::make_unique<asio::io_service>() );
+	}
 
 	// have any long-term work to do (for ios)
-	boost::asio::signal_set signals(ios, SIGINT);
+	boost::asio::signal_set signals( * ios.at(0), SIGINT);
 	signals.async_wait( handler_signal_term );
 
-	_note("Starting ios run"); // ios.run()
+	_note("Starting ios worker - ios.run"); // ios.run()
 	vector<std::thread> thread_run_tab;
-	for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
-		std::thread thread_run(
-			[&ios, ios_thread] {
-				_note("ios run (ios_thread="<<ios_thread<<" - starting");
-				ios.run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
-				_note("ios run (ios_thread="<<ios_thread<<" - COMPLETE");
-			}
-		);
-		thread_run_tab.push_back( std::move( thread_run ) );
+	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
+		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
+			std::thread thread_run(
+				[&ios, ios_thread, ios_nr] {
+					_goal("ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
+					ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+					_dbg4("ios worker run (ios_thread="<<ios_thread<<" - COMPLETE");
+				}
+			);
+			thread_run_tab.push_back( std::move( thread_run ) );
+		}
 	}
 
 	_dbg1("The stop thread"); // exit flag --> ios.stop()
@@ -290,7 +297,9 @@ void asiotest_udpserv() {
 					break;
 				}
 			}
-			ios.stop(); // thread safe, asio::io_service is TS for most functions
+			for (auto & one_ios : ios) {
+				one_ios->stop(); // thread safe, asio::io_service is TS for most functions
+			}
 		}
 	);
 
@@ -301,7 +310,8 @@ void asiotest_udpserv() {
 	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
 		_note("Creating socket #"<<nr_sock);
 		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
-		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(ios,ios) );
+		auto & one_ios = ios.at( nr_sock % ios.size() );
+		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
 		_note("bind socket "<<nr_sock);
 
 		boost::asio::ip::udp::socket & thesocket = mysocket_in_strand.back().get_unsafe_assume_in_strand().get();
