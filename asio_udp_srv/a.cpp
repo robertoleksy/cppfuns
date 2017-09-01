@@ -21,19 +21,19 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 1
+#if 0
 #define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
-#define _mark(X) _note(X);
+#define _mark(X) _note("****** " << X);
 #else
-#define _dbg4(X) { std::cout<<X<<std::endl; }
+#define _dbg4(X) {if(0){ std::cout<<X<<std::endl;} }
 #define _dbg1(X) {if(0)_dbg4(X);}
 #define _note(X) {if(0)_dbg4(X);}
 #define _mark(X) {if(0)_dbg4(X);}
 #endif
 
-#define _goal(X) { std::cout<<X<<std::endl; }
+#define _goal(X) { std::cout<<"====== " << X<<std::endl; }
 
 #define UsePtr(X) (* (X) )
 #define addrvoid(X) ( static_cast<const void*>( & (X) ) )
@@ -74,7 +74,7 @@ class with_strand {
 		T & get_unsafe_assume_in_strand() { return m_obj; }
 		const T & get_unsafe_assume_in_strand() const { return m_obj; }
 
-		asio::strand get_strand() { return m_strand; }
+		asio::io_service::strand get_strand() { return m_strand; }
 
 		template <typename Lambda> auto wrap(Lambda && lambda) {
 			return m_strand.wrap( std::move(lambda) );
@@ -82,7 +82,7 @@ class with_strand {
 
 	private:
 		T m_obj;
-		asio::strand m_strand;
+		asio::io_service::strand m_strand;
 };
 
 
@@ -118,12 +118,11 @@ class c_inbuf_tab {
 c_inbuf_tab::c_inbuf_tab(size_t howmany) {
 	for (size_t i=0; i<howmany; ++i) {
 		auto newbuff = make_unique<t_inbuf>();
-		_dbg1("");
 		_note("newbuff at " << addrvoid( *newbuff) );
-		_dbg1("newbuff before move: " << newbuff.get() );
+	//	_dbg1("newbuff before move: " << newbuff.get() );
 		m_inbufs.push_back( std::move(newbuff) );
-		_dbg1("newbuff after move: " << newbuff.get() );
-		_dbg1("tab after move: " << m_inbufs.at(i).get() );
+	//	_dbg1("newbuff after move: " << newbuff.get() );
+	//_dbg1("tab after move: " << m_inbufs.at(i).get() );
 	}
 }
 size_t c_inbuf_tab::buffers_count() { return m_inbufs.size(); }
@@ -194,7 +193,7 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 			bbb ^= aaa;
 		}
 		auto volatile rrr = bbb;
-		if (rrr==0) _note("rrr="<<rrr);
+		if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
 
 		mysocket.get_strand().post(
 			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
@@ -208,7 +207,7 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 	// ---
 
 	else if (algo_step==e_algo_receive::restart_read) {
-		_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
+		_dbg1("Restarting async read, on mysocket="<<addrvoid(mysocket));
 		// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
 
 		char* inbuf_data = & inbuf.m_data[0] ;
@@ -220,13 +219,13 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
 			.get()
 			.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			// mysocket.wrap(
+			mysocket.wrap(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
 				{
 					_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
 					handler_receive(e_algo_receive::next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 				}
-			// )
+			)
 		);
 		_dbg1("Restarting async read - done");
 	} // restart_read
@@ -249,11 +248,12 @@ void asiotest_udpserv() {
 
 	asio::io_service ios;
 
-	// TODO XXX
-	_goal("WARNING this is NOT THREAD SAFE (race on the socket accsssed from handlers across different handler-flows");
 	const int cfg_num_inbuf = 16;
-	const int cfg_num_thread_per_ios = 16;
-	const int cfg_num_socket = 2;
+	const int cfg_num_socket = 1;
+	const int cfg_buf_socket_spread = 1; // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
+
+	const int cfg_num_ios = 1; // TODO
+	const int cfg_num_thread_per_ios = 4;
 
 	// have any long-term work to do (for ios)
 	boost::asio::signal_set signals(ios, SIGINT);
@@ -298,75 +298,60 @@ void asiotest_udpserv() {
 
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> mysocket_in_strand;
 
-
-	_note("Example with reuse...");
-	auto listen_address = boost::asio::ip::address_v4::from_string("127.0.0.1");
-	int multicast_port = 8001;
-	boost::asio::ip::udp::endpoint listen_endpoint(
-	    listen_address, multicast_port);
-
-	boost::asio::io_service ioservice;
-	boost::asio::ip::udp::socket socket_(ioservice);
-	boost::asio::ip::udp::socket socket2_(ioservice);
-	// == important part ==
-	socket_.open(listen_endpoint.protocol());
-	socket_.set_option(boost::asio::ip::udp::socket::reuse_address(true));
-	socket_.bind(listen_endpoint);
-
-	socket2_.open(listen_endpoint.protocol());
-	socket2_.set_option(boost::asio::ip::udp::socket::reuse_address(true));
-	socket2_.bind(listen_endpoint);
-
-	// == important part ==
-/*	boost::asio::ip::udp::endpoint remote_endpoint;
-	std::array<char, 2000> recvBuffer;
-	socket_.receive_from(boost::asio::buffer(recvBuffer), remote_endpoint);
-	socket2_.receive_from(boost::asio::buffer(recvBuffer), remote_endpoint);*/
-	_note("Example with reuse... - done");
-
-
-//	boost::asio::ip::udp::socket socket3(ioservice);
-//	boost::asio::ip::udp::socket socket4(ioservice);
-//	vector< with_strand<ThreadObject<boost::asio::ip::udp::socket>> > socket_tab;
-
 	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
 		_note("Creating socket #"<<nr_sock);
 		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
 		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(ios,ios) );
-		_note("bind");
+		_note("bind socket "<<nr_sock);
 
 		boost::asio::ip::udp::socket & thesocket = mysocket_in_strand.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
 		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
-		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , 9000 ) );
+		// thesocket.bind( asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , 9000 ) );
+		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
 	}
 
-	_mark("all ok");
-	std::string s;
-	getline(std::cin,s);
-	return ;
+	_mark("sockets created");
 
 	asio::ip::udp::endpoint remote_ep;
 
 	std::mutex mutex_handlerflow_socket;
 
 	// add first work - handler-flow
-	for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
+	auto func_spawn_flow = [&](int inbuf_nr, int socket_nr_raw) {
+		assert(inbuf_nr >= 0);
+		assert(socket_nr_raw >= 0);
+		int socket_nr = socket_nr_raw % mysocket_in_strand.size(); // spread it (rotate)
+		_mark("Creating workflow: buf="<<inbuf_nr<<" socket="<<socket_nr);
+
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
 		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 		_dbg1("async read, on mysocket="<<addrvoid(mysocket_in_strand));
 		{
 			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
 
-			mysocket_in_strand.at(0).get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-				mysocket_in_strand.at(0).wrap(
-					[&mysocket_in_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+			auto & this_socket_and_strand = mysocket_in_strand.at(socket_nr);
+
+			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+				this_socket_and_strand.wrap(
+					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::first_read, ec,bytes_transferred, mysocket_in_strand.at(0),inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+						handler_receive(e_algo_receive::first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 					}
 				)
 			); // start async
+		}
+	} ;
+
+	if (cfg_buf_socket_spread==0) {
+		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {	func_spawn_flow( inbuf_nr , inbuf_nr); }
+	}
+	else if (cfg_buf_socket_spread==1) {
+		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
+			int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(cfg_num_inbuf ) * cfg_num_socket );
+			// int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(inbuf_tab.buffers_count() ) * mysocket_in_strand.size() );
+			func_spawn_flow( inbuf_nr , socket_nr );
 		}
 	}
 
