@@ -248,12 +248,12 @@ void asiotest_udpserv() {
 
 	asio::io_service ios;
 
-	const int cfg_num_inbuf = 16;
-	const int cfg_num_socket = 1;
+	const int cfg_num_inbuf = 128;
+	const int cfg_num_socket = 4;
 	const int cfg_buf_socket_spread = 1; // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
 	const int cfg_num_ios = 1; // TODO
-	const int cfg_num_thread_per_ios = 16;
+	const int cfg_num_thread_per_ios = 128;
 
 	// have any long-term work to do (for ios)
 	boost::asio::signal_set signals(ios, SIGINT);
@@ -294,7 +294,7 @@ void asiotest_udpserv() {
 		}
 	);
 
-	c_inbuf_tab inbuf_tab(16);
+	c_inbuf_tab inbuf_tab(cfg_num_inbuf);
 
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> mysocket_in_strand;
 
