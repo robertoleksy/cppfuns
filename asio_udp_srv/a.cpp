@@ -21,16 +21,16 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 0
+#if 1
 #define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
 #define _mark(X) _note(X);
 #else
-#define _dbg4(X) {}
-#define _dbg1(X) {}
-#define _note(X) {}
-#define _mark(X) {}
+#define _dbg4(X) { std::cout<<X<<std::endl; }
+#define _dbg1(X) {if(0)_dbg4(X);}
+#define _note(X) {if(0)_dbg4(X);}
+#define _mark(X) {if(0)_dbg4(X);}
 #endif
 
 #define _goal(X) { std::cout<<X<<std::endl; }
@@ -213,6 +213,14 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 	_dbg1("Restarting async read - done");
 }
 
+namespace nettools {
+
+
+// void socket_reuse_same_process(
+
+
+};
+
 void asiotest_udpserv() {
 	g_atomic_exit=false;
 	g_recv_totall_count=0;
@@ -225,6 +233,7 @@ void asiotest_udpserv() {
 	_goal("WARNING this is NOT THREAD SAFE (race on the socket accsssed from handlers across different handler-flows");
 	const int cfg_num_inbuf = 16;
 	const int cfg_num_thread_per_ios = 16;
+	const int cfg_num_socket = 2;
 
 	// have any long-term work to do (for ios)
 	boost::asio::signal_set signals(ios, SIGINT);
@@ -267,10 +276,57 @@ void asiotest_udpserv() {
 
 	c_inbuf_tab inbuf_tab(16);
 
-	with_strand<ThreadObject<asio::ip::udp::socket>> mysocket_in_strand(ios,ios); // active udp
-	_note("bind");
-	mysocket_in_strand.get_unsafe_assume_in_strand().get().open( asio::ip::udp::v4() );
-	mysocket_in_strand.get_unsafe_assume_in_strand().get().bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
+	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> mysocket_in_strand;
+
+
+	_note("Example with reuse...");
+	auto listen_address = boost::asio::ip::address_v4::from_string("127.0.0.1");
+	int multicast_port = 8001;
+	boost::asio::ip::udp::endpoint listen_endpoint(
+	    listen_address, multicast_port);
+
+	boost::asio::io_service ioservice;
+	boost::asio::ip::udp::socket socket_(ioservice);
+	boost::asio::ip::udp::socket socket2_(ioservice);
+	// == important part ==
+	socket_.open(listen_endpoint.protocol());
+	socket_.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+	socket_.bind(listen_endpoint);
+
+	socket2_.open(listen_endpoint.protocol());
+	socket2_.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+	socket2_.bind(listen_endpoint);
+
+	// == important part ==
+/*	boost::asio::ip::udp::endpoint remote_endpoint;
+	std::array<char, 2000> recvBuffer;
+	socket_.receive_from(boost::asio::buffer(recvBuffer), remote_endpoint);
+	socket2_.receive_from(boost::asio::buffer(recvBuffer), remote_endpoint);*/
+	_note("Example with reuse... - done");
+
+
+//	boost::asio::ip::udp::socket socket3(ioservice);
+//	boost::asio::ip::udp::socket socket4(ioservice);
+//	vector< with_strand<ThreadObject<boost::asio::ip::udp::socket>> > socket_tab;
+
+	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
+		_note("Creating socket #"<<nr_sock);
+		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
+		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(ios,ios) );
+		_note("bind");
+
+		boost::asio::ip::udp::socket & thesocket = mysocket_in_strand.back().get_unsafe_assume_in_strand().get();
+
+		thesocket.open( asio::ip::udp::v4() );
+		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , 9000 ) );
+	}
+
+	_mark("all ok");
+	std::string s;
+	getline(std::cin,s);
+	return ;
+
 	asio::ip::udp::endpoint remote_ep;
 
 	std::mutex mutex_handlerflow_socket;
@@ -282,11 +338,11 @@ void asiotest_udpserv() {
 		_dbg1("async read, on mysocket="<<addrvoid(mysocket_in_strand));
 		{
 			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
-			mysocket_in_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-				mysocket_in_strand.wrap(
+			mysocket_in_strand.at(0).get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+				mysocket_in_strand.at(0).wrap(
 					[&mysocket_in_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(ec,bytes_transferred, mysocket_in_strand,inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+						handler_receive(ec,bytes_transferred, mysocket_in_strand.at(0),inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 					}
 				)
 			); // start async
