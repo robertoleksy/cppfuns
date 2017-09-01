@@ -74,6 +74,8 @@ class with_strand {
 		T & get_unsafe_assume_in_strand() { return m_obj; }
 		const T & get_unsafe_assume_in_strand() const { return m_obj; }
 
+		asio::strand get_strand() { return m_strand; }
+
 		template <typename Lambda> auto wrap(Lambda && lambda) {
 			return m_strand.wrap( std::move(lambda) );
 		}
@@ -110,8 +112,8 @@ class c_inbuf_tab {
 
 		c_inbuf_tab(size_t howmany);
 		size_t buffers_count();
-		char* addr(size_t ix);
-		t_inbuf & get(size_t ix);
+		char* addr(size_t ix); ///< thread-safe
+		t_inbuf & get(size_t ix); ///< thread-safe
 };
 c_inbuf_tab::c_inbuf_tab(size_t howmany) {
 	for (size_t i=0; i<howmany; ++i) {
@@ -131,7 +133,7 @@ char* c_inbuf_tab::addr(size_t ix) {
 }
 
 t_inbuf & c_inbuf_tab::get(size_t ix) {
-	return * m_inbufs.at(ix) ;
+	return * m_inbufs.at(ix) ; // thread-safe: access to vector (read only)
 }
 
 void handler_signal_term(const boost::system::error_code& error , int signal_number)
@@ -140,7 +142,12 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 	g_atomic_exit = true;
 }
 
-void handler_receive(const boost::system::error_code & ec, std::size_t bytes_transferred,
+enum class e_algo_receive {
+	first_read, next_read, // handler when we got the date -, need to read it and use it, decrypt it
+	restart_read, // handler when we are now ordered to restart the read
+};
+
+void handler_receive(const e_algo_receive algo_step, const boost::system::error_code & ec, std::size_t bytes_transferred,
 	with_strand< ThreadObject<asio::ip::udp::socket> > & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
 	std::mutex & mutex_handlerflow_socket)
@@ -150,67 +157,80 @@ void handler_receive(const boost::system::error_code & ec, std::size_t bytes_tra
 		return;
 	}
 
-	auto & inbuf = inbuf_tab.get(inbuf_nr);
-	_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab)
+auto & inbuf = inbuf_tab.get(inbuf_nr);
+_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab)
 		<< " inbuf at " << static_cast<void*>( & inbuf)
 		<< " from remote IP " << inbuf.m_ep << " bytes_transferred="<<bytes_transferred
 		<< " read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]"
 	);
-	++ g_recv_totall_count;
-	g_recv_totall_size += bytes_transferred;
-	static const char * marker = "exit";
-	static const size_t marker_len = strlen(marker);
 
-	t_mytime time_now( std::chrono::steady_clock::now() );
-	t_mytime time_zero;
-	g_recv_started.compare_exchange_strong(
-		time_zero,
-		time_now
-	);
+	if ((algo_step==e_algo_receive::first_read) || (algo_step==e_algo_receive::next_read)) {
+		++ g_recv_totall_count;
+		g_recv_totall_size += bytes_transferred;
+		static const char * marker = "exit";
+		static const size_t marker_len = strlen(marker);
 
-	if (std::strncmp( &inbuf.m_data[0] , marker , std::min(bytes_transferred,marker_len) )==0) {
-		if (bytes_transferred == marker_len) {
-			_note("Message is EXIT, will exit");
-			g_atomic_exit=true;
+		t_mytime time_now( std::chrono::steady_clock::now() );
+		t_mytime time_zero;
+		g_recv_started.compare_exchange_strong(
+			time_zero,
+			time_now
+		);
+
+		if (std::strncmp( &inbuf.m_data[0] , marker , std::min(bytes_transferred,marker_len) )==0) {
+			if (bytes_transferred == marker_len) {
+				_note("Message is EXIT, will exit");
+				g_atomic_exit=true;
+			}
 		}
-	}
 
-	char* inbuf_data = & inbuf.m_data[0] ;
-	auto inbuf_asio = asio::buffer( inbuf_data  , std::extent<decltype(inbuf.m_data)>::value );
-	assert( asio::buffer_size( inbuf_asio ) > 0 );
-	_dbg4("buffer size is: " << asio::buffer_size( inbuf_asio ) );
-
-	// fake "decrypt/encrypt" operation
-	unsigned char bbb=0;
-	for (unsigned int j=0; j<10; ++j) {
-		unsigned char aaa = j%5;
-			for (size_t pos=0; pos<bytes_transferred; ++pos) {
-			aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
+		// fake "decrypt/encrypt" operation
+		unsigned char bbb=0;
+		for (unsigned int j=0; j<10; ++j) {
+			unsigned char aaa = j%5;
+				for (size_t pos=0; pos<bytes_transferred; ++pos) {
+				aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
+			}
+			bbb ^= aaa;
 		}
-		bbb ^= aaa;
-	}
-	auto volatile rrr = bbb;
-	if (rrr==0) _note("rrr="<<rrr);
+		auto volatile rrr = bbb;
+		if (rrr==0) _note("rrr="<<rrr);
+
+		mysocket.get_strand().post(
+			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
+			{
+				_dbg1("Handler (restart read)");
+				handler_receive(e_algo_receive::restart_read, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+			}
+		);
+	} // first_read or next_read
 
 	// ---
 
-	_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
-	{
+	else if (algo_step==e_algo_receive::restart_read) {
+		_dbg4("Restarting async read, on mysocket="<<addrvoid(mysocket));
 		// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
+
+		char* inbuf_data = & inbuf.m_data[0] ;
+		auto inbuf_asio = asio::buffer( inbuf_data  , std::extent<decltype(inbuf.m_data)>::value );
+		assert( asio::buffer_size( inbuf_asio ) > 0 );
+		_dbg4("buffer size is: " << asio::buffer_size( inbuf_asio ) );
+
 
 		mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
 			.get()
 			.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-			mysocket.wrap(
+			// mysocket.wrap(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
 				{
 					_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
-					handler_receive(ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+					handler_receive(e_algo_receive::next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 				}
-			)
+			// )
 		);
-	}
-	_dbg1("Restarting async read - done");
+		_dbg1("Restarting async read - done");
+	} // restart_read
+	else throw std::runtime_error("Unknown state of algo.");
 }
 
 namespace nettools {
@@ -338,17 +358,17 @@ void asiotest_udpserv() {
 		_dbg1("async read, on mysocket="<<addrvoid(mysocket_in_strand));
 		{
 			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
+
 			mysocket_in_strand.at(0).get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 				mysocket_in_strand.at(0).wrap(
 					[&mysocket_in_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(ec,bytes_transferred, mysocket_in_strand.at(0),inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+						handler_receive(e_algo_receive::first_read, ec,bytes_transferred, mysocket_in_strand.at(0),inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 					}
 				)
 			); // start async
 		}
 	}
-
 
 	thread_stop.join();
 	for (auto & thr : thread_run_tab) {
