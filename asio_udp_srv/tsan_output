@@ -1,0 +1,62 @@
+rysiek@debian:~/cppfuns/asio_udp_srv$ make tsan
+./tsan.out
+WARNING this is NOT THREAD SAFE (race on the socket accsssed from handlers across different handler-flows
+==================
+WARNING: ThreadSanitizer: data race (pid=21306)
+  Read of size 4 at 0x7ffe5ef41740 by thread T3:
+    #0 ThreadObject<boost::asio::basic_datagram_socket<boost::asio::ip::udp, boost::asio::datagram_socket_service<boost::asio::ip::udp> > >::get() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:46 (tsan.out+0x0000004acd86)
+    #1 handler_receive(boost::system::error_code const&, unsigned long, ThreadObject<boost::asio::basic_datagram_socket<boost::asio::ip::udp, boost::asio::datagram_socket_service<boost::asio::ip::udp> > >&, c_inbuf_tab&, unsigned long) /home/rysiek/cppfuns/asio_udp_srv/a.cpp:142 (tsan.out+0x0000004a9302)
+    #2 operator() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:208 (tsan.out+0x0000004ac286)
+    #3 boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>::operator()() /usr/include/boost/asio/detail/bind_handler.hpp:127 (tsan.out+0x0000004ac1c5)
+    #4 void boost::asio::asio_handler_invoke<boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long> >(boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>&, ...) /usr/include/boost/asio/handler_invoke_hook.hpp:69 (tsan.out+0x0000004ac157)
+    #5 void boost_asio_handler_invoke_helpers::invoke<boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>, asiotest_udpserv()::$_3>(boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>&, asiotest_udpserv()::$_3&) /usr/include/boost/asio/detail/handler_invoke_helpers.hpp:37 (tsan.out+0x0000004ac05d)
+    #6 boost::asio::detail::reactive_socket_recvfrom_op<boost::asio::mutable_buffers_1, boost::asio::ip::basic_endpoint<boost::asio::ip::udp>, asiotest_udpserv()::$_3>::do_complete(boost::asio::detail::task_io_service*, boost::asio::detail::task_io_service_operation*, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/reactive_socket_recvfrom_op.hpp:120 (tsan.out+0x0000004abdc2)
+    #7 boost::asio::detail::task_io_service_operation::complete(boost::asio::detail::task_io_service&, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/task_io_service_operation.hpp:38 (tsan.out+0x0000004bcf77)
+    #8 boost::asio::detail::task_io_service::do_run_one(boost::asio::detail::scoped_lock<boost::asio::detail::posix_mutex>&, boost::asio::detail::task_io_service_thread_info&, boost::system::error_code const&) /usr/include/boost/asio/detail/impl/task_io_service.ipp:372 (tsan.out+0x0000004c1306)
+    #9 boost::asio::detail::task_io_service::run(boost::system::error_code&) /usr/include/boost/asio/detail/impl/task_io_service.ipp:149 (tsan.out+0x0000004c0c5e)
+    #10 boost::asio::io_service::run() /usr/include/boost/asio/impl/io_service.ipp:59 (tsan.out+0x0000004c0b01)
+    #11 operator() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:171 (tsan.out+0x0000004aad3e)
+    #12 void std::_Bind_simple<asiotest_udpserv()::$_1 ()>::_M_invoke<>(std::_Index_tuple<>) /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/functional:1390 (tsan.out+0x0000004aaca8)
+    #13 std::_Bind_simple<asiotest_udpserv()::$_1 ()>::operator()() /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/functional:1380 (tsan.out+0x0000004aac58)
+    #14 std::thread::_State_impl<std::_Bind_simple<asiotest_udpserv()::$_1 ()> >::_M_run() /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/thread:197 (tsan.out+0x0000004aaa6c)
+    #15 std::error_code::default_error_condition() const <null> (libstdc++.so.6+0x0000000b9e6e)
+
+  Previous write of size 4 at 0x7ffe5ef41740 by thread T1:
+    #0 ThreadObject<boost::asio::basic_datagram_socket<boost::asio::ip::udp, boost::asio::datagram_socket_service<boost::asio::ip::udp> > >::get() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:46 (tsan.out+0x0000004acdb3)
+    #1 handler_receive(boost::system::error_code const&, unsigned long, ThreadObject<boost::asio::basic_datagram_socket<boost::asio::ip::udp, boost::asio::datagram_socket_service<boost::asio::ip::udp> > >&, c_inbuf_tab&, unsigned long) /home/rysiek/cppfuns/asio_udp_srv/a.cpp:142 (tsan.out+0x0000004a9302)
+    #2 operator() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:208 (tsan.out+0x0000004ac286)
+    #3 boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>::operator()() /usr/include/boost/asio/detail/bind_handler.hpp:127 (tsan.out+0x0000004ac1c5)
+    #4 void boost::asio::asio_handler_invoke<boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long> >(boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>&, ...) /usr/include/boost/asio/handler_invoke_hook.hpp:69 (tsan.out+0x0000004ac157)
+    #5 void boost_asio_handler_invoke_helpers::invoke<boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>, asiotest_udpserv()::$_3>(boost::asio::detail::binder2<asiotest_udpserv()::$_3, boost::system::error_code, unsigned long>&, asiotest_udpserv()::$_3&) /usr/include/boost/asio/detail/handler_invoke_helpers.hpp:37 (tsan.out+0x0000004ac05d)
+    #6 boost::asio::detail::reactive_socket_recvfrom_op<boost::asio::mutable_buffers_1, boost::asio::ip::basic_endpoint<boost::asio::ip::udp>, asiotest_udpserv()::$_3>::do_complete(boost::asio::detail::task_io_service*, boost::asio::detail::task_io_service_operation*, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/reactive_socket_recvfrom_op.hpp:120 (tsan.out+0x0000004abdc2)
+    #7 boost::asio::detail::task_io_service_operation::complete(boost::asio::detail::task_io_service&, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/task_io_service_operation.hpp:38 (tsan.out+0x0000004bcf77)
+    #8 boost::asio::detail::epoll_reactor::descriptor_state::do_complete(boost::asio::detail::task_io_service*, boost::asio::detail::task_io_service_operation*, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/impl/epoll_reactor.ipp:651 (tsan.out+0x0000004bcc6f)
+    #9 boost::asio::detail::task_io_service_operation::complete(boost::asio::detail::task_io_service&, boost::system::error_code const&, unsigned long) /usr/include/boost/asio/detail/task_io_service_operation.hpp:38 (tsan.out+0x0000004bcf77)
+    #10 boost::asio::detail::task_io_service::do_run_one(boost::asio::detail::scoped_lock<boost::asio::detail::posix_mutex>&, boost::asio::detail::task_io_service_thread_info&, boost::system::error_code const&) /usr/include/boost/asio/detail/impl/task_io_service.ipp:372 (tsan.out+0x0000004c1306)
+    #11 boost::asio::detail::task_io_service::run(boost::system::error_code&) /usr/include/boost/asio/detail/impl/task_io_service.ipp:149 (tsan.out+0x0000004c0c5e)
+    #12 boost::asio::io_service::run() /usr/include/boost/asio/impl/io_service.ipp:59 (tsan.out+0x0000004c0b01)
+    #13 operator() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:171 (tsan.out+0x0000004aad3e)
+    #14 void std::_Bind_simple<asiotest_udpserv()::$_1 ()>::_M_invoke<>(std::_Index_tuple<>) /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/functional:1390 (tsan.out+0x0000004aaca8)
+    #15 std::_Bind_simple<asiotest_udpserv()::$_1 ()>::operator()() /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/functional:1380 (tsan.out+0x0000004aac58)
+    #16 std::thread::_State_impl<std::_Bind_simple<asiotest_udpserv()::$_1 ()> >::_M_run() /usr/bin/../lib/gcc/x86_64-linux-gnu/6.3.0/../../../../include/c++/6.3.0/thread:197 (tsan.out+0x0000004aaa6c)
+    #17 std::error_code::default_error_condition() const <null> (libstdc++.so.6+0x0000000b9e6e)
+
+  Location is stack of main thread.
+
+  Thread T3 (tid=21310, running) created by main thread at:
+    #0 pthread_create <null> (tsan.out+0x000000427356)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0x0000000ba164)
+    #2 asiotest_udpserv() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:168 (tsan.out+0x0000004a94cb)
+    #3 asiotest() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:226 (tsan.out+0x0000004a9b3c)
+    #4 main /home/rysiek/cppfuns/asio_udp_srv/a.cpp:279 (tsan.out+0x0000004a9b6c)
+
+  Thread T1 (tid=21308, running) created by main thread at:
+    #0 pthread_create <null> (tsan.out+0x000000427356)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0x0000000ba164)
+    #2 asiotest_udpserv() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:168 (tsan.out+0x0000004a94cb)
+    #3 asiotest() /home/rysiek/cppfuns/asio_udp_srv/a.cpp:226 (tsan.out+0x0000004a9b3c)
+    #4 main /home/rysiek/cppfuns/asio_udp_srv/a.cpp:279 (tsan.out+0x0000004a9b6c)
+
+SUMMARY: ThreadSanitizer: data race /home/rysiek/cppfuns/asio_udp_srv/a.cpp:46 in ThreadObject<boost::asio::basic_datagram_socket<boost::asio::ip::udp, boost::asio::datagram_socket_service<boost::asio::ip::udp> > >::get()
+==================
+
