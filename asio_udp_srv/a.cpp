@@ -21,10 +21,12 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 0
+bool g_debug = false;
+
+#if 1
 #define _dbg4(X) {}
-#define _dbg1(X) { std::cout<<X<<std::endl; }
-#define _note(X) { std::cout<<X<<std::endl; }
+#define _dbg1(X) { if (g_debug) { std::cout<<X<<std::endl; } }
+#define _note(X) { _dbg1(X); }
 #define _mark(X) _note("****** " << X);
 #else
 #define _dbg4(X) {if(0){ std::cout<<X<<std::endl;} }
@@ -272,7 +274,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	if (options.size()<4) {
 		std::cout << "\nUsage: program inbuf   socket socket_spread   ios thread_per_ios  crypto_task [OPTIONS]\n"
-		<< "OPTIONS can be any of words: mport\n"
+		<< "OPTIONS can be any of words: mport debug\n"
 		<< "See code for more details. socket_spread must be 0 or 1.\n"
 		<< "crypto_task must be 0, or >0.\n"
 		<< "E.g.: program 32   2 0  4 16\n"
@@ -495,6 +497,8 @@ void asiotest(std::vector<std::string> options)
 int main(int argc, const char **argv) {
 	std::vector< std::string> options;
 	for (int i=1; i<argc; ++i) options.push_back(argv[i]);
+	for (const string & arg : options) if ((arg=="dbg")||(arg=="debug")||(arg=="d")) g_debug = true;
+	_goal("Starting program");
 	asiotest(options);
 	_goal("Normal exit");
 	return 0;

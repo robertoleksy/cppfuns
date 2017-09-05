@@ -1,10 +1,13 @@
 
-.PHONY: run
+.PHONY: run run_bug
 
 all: a.out
 
 run: a.out
 	./a.out 32   2 0  4 4  0  mport
+
+run_bug: a.out
+	./a.out 32   2 0  4 4  0
 
 tsan: tsan.out
 	./tsan.out
