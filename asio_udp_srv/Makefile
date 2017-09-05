@@ -4,7 +4,7 @@
 all: a.out
 
 run: a.out
-	./a.out
+	./a.out 32   2 0  4 16  10
 
 tsan: tsan.out
 	./tsan.out
@@ -28,3 +28,4 @@ g.out: a.cpp
 
 tsan.out: a.cpp
 	clang++ a.cpp --std=c++14 -fsanitize=thread -g3 -Wall -o tsan.out -lboost_system -pthread
+

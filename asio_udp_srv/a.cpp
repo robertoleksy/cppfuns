@@ -146,6 +146,10 @@ enum class e_algo_receive {
 	after_processing_done, // handler when we are now ordered to restart the read
 };
 
+
+
+int cfg_test_crypto_task=0; // global option
+
 void handler_receive(const e_algo_receive algo_step, const boost::system::error_code & ec, std::size_t bytes_transferred,
 	with_strand< ThreadObject<asio::ip::udp::socket> > & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
@@ -184,16 +188,25 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		}
 
 		// fake "decrypt/encrypt" operation
-		unsigned char bbb=0;
-		for (unsigned int j=0; j<10; ++j) {
-			unsigned char aaa = j%5;
-				for (size_t pos=0; pos<bytes_transferred; ++pos) {
-				aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
+		if (cfg_test_crypto_task > 0) {
+			unsigned char bbb=0;
+			for (unsigned int j=0; j<cfg_test_crypto_task; ++j) {
+				unsigned char aaa = j%5;
+					for (size_t pos=0; pos<bytes_transferred; ++pos) {
+					aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
+				}
+				bbb ^= aaa;
 			}
-			bbb ^= aaa;
+			auto volatile rrr = bbb;
+			if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
 		}
-		auto volatile rrr = bbb;
-		if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
+		else {
+			// nothing. Just avoid warnings / deadcode optimize / unused
+			unsigned char volatile xxx;
+			xxx=inbuf.m_data[0];
+			unsigned char volatile yyy = xxx;
+			if (yyy == 0) ++yyy;
+		}
 
 		mysocket.get_strand().post(
 			mysocket.wrap(
@@ -240,19 +253,34 @@ namespace nettools {
 
 };
 
-void asiotest_udpserv() {
+int safe_atoi(const std::string & s) {
+	return atoi(s.c_str());
+}
+
+void asiotest_udpserv(std::vector<std::string> options) {
 	g_atomic_exit=false;
 	g_recv_totall_count=0;
 	g_recv_totall_size=0;
 	g_recv_started = t_mytime{};
 
+	if (options.size()<4) {
+		std::cout << "\nUsage: program inbuf   socket socket_spread   ios thread_per_ios  crypto_task\n"
+		<< "See code for more details. socket_spread must be 0 or 1.\n"
+		<< "crypto_task must be 0, or >0.\n"
+		<< "E.g.: program 32   2 0  4 16\n"
+		<< std::endl;
+	}
 
-	const int cfg_num_inbuf = 32; // this is also the number of flows
-	const int cfg_num_socket = 1;
-	const int cfg_buf_socket_spread = 1; // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
+	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows
+	const int cfg_num_socket = safe_atoi(options.at(1)); // 2 ; number of sockets
+	const int cfg_buf_socket_spread = safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
-	const int cfg_num_ios = 4;
-	const int cfg_num_thread_per_ios = 16;
+	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
+	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
+
+	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
+
+	_goal("Starting test. cfg_test_crypto_task="<<cfg_test_crypto_task);
 
 	std::vector<std::unique_ptr<asio::io_service>> ios;
 	for (int i=0; i<cfg_num_ios; ++i) {
@@ -371,13 +399,13 @@ void asiotest_udpserv() {
 }
 
 
-void asiotest()
+void asiotest(std::vector<std::string> options)
 {
 	_mark("asiotest");
 
   int port_num = 3456;
 
-  asiotest_udpserv();
+  asiotest_udpserv(options);
   return; // !!!
 
 	asio::io_service ios;
@@ -431,8 +459,10 @@ void asiotest()
 
 
 
-int main() {
-	asiotest();
+int main(int argc, const char **argv) {
+	std::vector< std::string> options;
+	for (int i=1; i<argc; ++i) options.push_back(argv[i]);
+	asiotest(options);
 	_goal("Normal exit");
 	return 0;
 }
