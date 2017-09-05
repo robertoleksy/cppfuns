@@ -21,7 +21,7 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 0
+#if 1
 #define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
@@ -42,6 +42,8 @@ using namespace boost;
 using std::vector;
 using std::unique_ptr;
 using std::make_unique;
+using std::string;
+using std::endl;
 
 template <typename T>
 class ThreadObject {
@@ -278,13 +280,22 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
 	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
 
+	auto func_show_summary = [&]() {
+		_goal("Summary: " << endl
+			<< "inbufs: " << cfg_num_inbuf << endl
+			<< "socket: " << cfg_num_socket << " in spread: " << cfg_buf_socket_spread << endl
+			<< "ios: " << cfg_num_ios << " per each there are threads: " << cfg_num_thread_per_ios << endl
+		);
+	};
+	func_show_summary();
+
 	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
 
 	_goal("Starting test. cfg_test_crypto_task="<<cfg_test_crypto_task);
 
 	std::vector<std::unique_ptr<asio::io_service>> ios;
 	for (int i=0; i<cfg_num_ios; ++i) {
-		_goal("Creating ios "<<cfg_num_ios);
+		_goal("Creating ios nr "<<i);
 		ios.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
@@ -292,10 +303,13 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	boost::asio::signal_set signals( * ios.at(0), SIGINT);
 	signals.async_wait( handler_signal_term );
 
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+
 	_note("Starting ios worker - ios.run"); // ios.run()
 	vector<std::thread> thread_run_tab;
 	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
 		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
+			_goal("start worker: " << ios_nr << " " << ios_thread);
 			std::thread thread_run(
 				[&ios, ios_thread, ios_nr] {
 					_goal("ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
@@ -335,6 +349,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> mysocket_in_strand;
 
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
 		_note("Creating socket #"<<nr_sock);
 		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
@@ -391,10 +406,16 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	}
 
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+	_goal("All started");
+	func_show_summary();
+
+	_goal("Waiting for all threads to end");
 	thread_stop.join();
 	for (auto & thr : thread_run_tab) {
 		thr.join();
 	}
+	_goal("All threads done");
 
 }
 
