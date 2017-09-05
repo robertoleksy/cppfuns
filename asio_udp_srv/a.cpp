@@ -4,6 +4,9 @@ This program - as all codes in this project - is totally experimental, likelly h
 Do not use it.
 
 
+Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/ticket/13193
+
+
 */
 
 
