@@ -4,7 +4,7 @@
 all: a.out
 
 run: a.out
-	./a.out 32   2 0  4 16  10
+	./a.out 32   2 0  4 4  0  mport
 
 tsan: tsan.out
 	./tsan.out

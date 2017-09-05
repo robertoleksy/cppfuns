@@ -21,7 +21,7 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 1
+#if 0
 #define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
@@ -259,6 +259,11 @@ int safe_atoi(const std::string & s) {
 	return atoi(s.c_str());
 }
 
+string yesno(bool yes) {
+	if (yes) return "ENABLED";
+	return "no";
+}
+
 void asiotest_udpserv(std::vector<std::string> options) {
 	g_atomic_exit=false;
 	g_recv_totall_count=0;
@@ -266,7 +271,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	g_recv_started = t_mytime{};
 
 	if (options.size()<4) {
-		std::cout << "\nUsage: program inbuf   socket socket_spread   ios thread_per_ios  crypto_task\n"
+		std::cout << "\nUsage: program inbuf   socket socket_spread   ios thread_per_ios  crypto_task [OPTIONS]\n"
+		<< "OPTIONS can be any of words: mport\n"
 		<< "See code for more details. socket_spread must be 0 or 1.\n"
 		<< "crypto_task must be 0, or >0.\n"
 		<< "E.g.: program 32   2 0  4 16\n"
@@ -280,11 +286,15 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
 	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
 
+	bool cfg_port_multiport = false;
+	for (const string & arg : options) if (arg=="mport") cfg_port_multiport=true;
+
 	auto func_show_summary = [&]() {
 		_goal("Summary: " << endl
 			<< "inbufs: " << cfg_num_inbuf << endl
 			<< "socket: " << cfg_num_socket << " in spread: " << cfg_buf_socket_spread << endl
 			<< "ios: " << cfg_num_ios << " per each there are threads: " << cfg_num_thread_per_ios << endl
+			<< "option: " << "mport="<<yesno(cfg_port_multiport)<<" " << endl
 		);
 	};
 	func_show_summary();
@@ -351,7 +361,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
-		_note("Creating socket #"<<nr_sock);
+		int port_nr = 9000;
+		if (cfg_port_multiport) port_nr += nr_sock;
+		_note("Creating socket #"<<nr_sock<<" on port " << port_nr);
 		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
 		auto & one_ios = ios.at( nr_sock % ios.size() );
 		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
@@ -362,7 +374,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		thesocket.open( asio::ip::udp::v4() );
 		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 		// thesocket.bind( asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , 9000 ) );
-		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
+		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
 	_mark("sockets created");
