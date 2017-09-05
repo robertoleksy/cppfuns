@@ -21,7 +21,7 @@ Do not use it.
 #include <atomic>
 #include <mutex>
 
-#if 0
+#if 1
 #define _dbg4(X) {}
 #define _dbg1(X) { std::cout<<X<<std::endl; }
 #define _note(X) { std::cout<<X<<std::endl; }
@@ -271,11 +271,11 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		<< std::endl;
 	}
 
-	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows
-	const int cfg_num_socket = safe_atoi(options.at(1)); // 2 ; number of sockets
-	const int cfg_buf_socket_spread = safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
+	const int cfg_num_inbuf = 32;// safe_atoi(options.at(0)); // 32 ; this is also the number of flows
+	const int cfg_num_socket = 2;// safe_atoi(options.at(1)); // 2 ; number of sockets
+	const int cfg_buf_socket_spread = 0; // safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
-	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
+	const int cfg_num_ios = 4;// safe_atoi(options.at(3)); // 4
 	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
 
 	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
