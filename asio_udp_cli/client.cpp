@@ -3,7 +3,8 @@
 #include <iostream>
 #include <boost/asio.hpp>
 
-using boost::asio::ip::udp;
+//using boost::asio::ip::udp;
+using namespace boost::asio::ip;
 
 enum { max_length = 655035 };
 
@@ -12,16 +13,20 @@ int main(int argc, char *argv[])
 	//const char *host = "192.168.1.103";
 	//const char *host = "127.0.0.1";
 	//const char *port = "9000";
-	if(argc < 3)
-		std::cout << "Usage: ./client <host> <port>" << std::endl;
+	if(argc < 4)
+		std::cout << "Usage: ./client <host> <port> <number_of_endpoints>" << std::endl;
 	const char *host = argv[1];
-	const char *port = argv[2];
+	const int port = std::stoi(argv[2]);
+	const int number_of_endpoints = std::stoi(argv[3]);
 	boost::asio::io_service io_service;
 
 	udp::socket s(io_service, udp::endpoint(udp::v4(), 0));
 
 	udp::resolver resolver(io_service);
-	udp::endpoint endpoint = *resolver.resolve({udp::v4(), host, port});
+	std::vector<udp::endpoint> endpoints;
+	for (int i=0; i<number_of_endpoints; i++) {
+		endpoints.push_back(udp::endpoint(address::from_string(host), port + i));
+	}
 
 	std::cout<<"Usage example: give command:"
 		<< "foo 0 1    - this will send text foo (1 time)" << std::endl
@@ -49,7 +54,7 @@ int main(int argc, char *argv[])
 		}
 
 		for (size_t i=0; i<count; i++)
-			s.send_to(boost::asio::buffer(request, request_length), endpoint);
+			s.send_to(boost::asio::buffer(request, request_length), endpoints.at(i%number_of_endpoints));
 	}
 /*
 	char reply[max_length];
