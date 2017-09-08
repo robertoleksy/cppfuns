@@ -7,6 +7,7 @@ import re
 from subprocess import check_output, DEVNULL, PIPE, Popen
 
 
+fast = True
 IP = '127.0.0.1'
 PORT = 9000
 UDP_SERVER_PATH = '../asio_udp_srv/'
@@ -30,7 +31,7 @@ def run_udp_server(*args):
 
 def stop_udp_server(ip, port):
     # time.sleep(1)
-    for _ in range(10000):
+    for _ in range(100000):
         SOCKET.sendto('exit'.encode(), (ip, port))
 
 
@@ -60,17 +61,25 @@ if __name__ == "__main__":
     max_buf_socket_spread = 2
     num_ios_list = [1, 2, 128, 1024]
     num_thread_per_ios_list = [1, 2, 3, 4, 5, 6, 7, 8, 16, 128]
+    work_list = [0, 10]
     max_port_multiport = 2
-    # f.write()
+    max_mt = 2
+    if fast:
+        num_inbuf_list = [1, 8, 32, 64]
+        num_socket_list = [1, 8, 32, 64]
+        num_ios_list = [1, 2, 128, 1024]
+        num_thread_per_ios_list = [1, 2, 8, 16, 128]
     with open('result.txt', 'w') as f:
         for num_inbuf in num_inbuf_list:
             for num_socket in num_socket_list:
                 for buf_socket_spread in range(max_buf_socket_spread):
                     for num_ios in num_ios_list:
                         for num_thread_per_ios in num_thread_per_ios_list:
-                            for port_multiport in range(max_port_multiport):
-                                args, ret = run_test(num_inbuf, num_socket, buf_socket_spread, num_ios, num_thread_per_ios, 0, 'mport' if port_multiport == 1 else '')
-                                f.write(str(args))
-                                f.write('\n')
-                                f.write(str(ret))
-                                f.write('\n')
+                            for work in work_list:
+                                for port_multiport in range(max_port_multiport):
+                                    for mt in range(max_mt):
+                                        args, ret = run_test(num_inbuf, num_socket, buf_socket_spread, num_ios, num_thread_per_ios, work, 'mport' if port_multiport == 1 else '', 'mt_strand' if mt == 1 else 'mt_mutex')
+                                        f.write(str(args))
+                                        f.write('\t')
+                                        f.write(str(ret))
+                                        f.write('\n')
