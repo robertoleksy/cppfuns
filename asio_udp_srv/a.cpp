@@ -157,6 +157,13 @@ enum class e_algo_receive {
 
 int cfg_test_crypto_task=0; // global option
 
+enum class t_mt_method {
+	mt_unset=0, // not set
+	mt_strand=1, // strands, wrap
+	mt_mutex=2, // mutex, lock
+};
+t_mt_method cfg_mt_method = t_mt_method::mt_unset;
+
 void handler_receive(const e_algo_receive algo_step, const boost::system::error_code & ec, std::size_t bytes_transferred,
 	with_strand< ThreadObject<asio::ip::udp::socket> > & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
@@ -215,38 +222,66 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 			if (yyy == 0) ++yyy;
 		}
 
-		mysocket.get_strand().post(
-			mysocket.wrap(
-			[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
-			{
-				_dbg1("Handler (restart read)");
-				handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
-			}
-			)
-		);
+		// [asioflow]
+		if (cfg_mt_method == t_mt_method::mt_strand) {
+			mysocket.get_strand().post(
+				mysocket.wrap(
+				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
+				{
+					_dbg1("Handler (restart read)");
+					handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+				}
+				)
+			);
+		}
+		else if (cfg_mt_method == t_mt_method::mt_mutex) {
+			mysocket.get_strand().post(
+				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
+				{
+					_dbg1("Handler (restart read)");
+					handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+				}
+			);
+		}
+		else throw std::runtime_error("unsupported mt");
 	} // first_read or next_read
 
 	// ---
 
 	else if (algo_step==e_algo_receive::after_processing_done) {
 		_dbg1("Restarting async read, on mysocket="<<addrvoid(mysocket));
-		// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
-
 		char* inbuf_data = & inbuf.m_data[0] ;
 		auto inbuf_asio = asio::buffer( inbuf_data  , std::extent<decltype(inbuf.m_data)>::value );
 		assert( asio::buffer_size( inbuf_asio ) > 0 );
 		_dbg4("buffer size is: " << asio::buffer_size( inbuf_asio ) );
 
+		if (cfg_mt_method == t_mt_method::mt_mutex) {
+			std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // *** LOCK ***
+			// [asioflow]
+			mysocket.get_unsafe_assume_in_strand() // in this block, we are using LOCKING so this is safe.
+				.get()
+				.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+					[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
+					{
+						_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
+						handler_receive(e_algo_receive::after_next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+					}
+			);
+		}
+		else if (cfg_mt_method == t_mt_method::mt_strand) {
+			// [asioflow]
+			mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
+				.get()
+				.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+					[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
+					{
+						_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
+						handler_receive(e_algo_receive::after_next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+					}
+			);
+		}
+		else throw std::runtime_error("unsupported mt");
 
-		mysocket.get_unsafe_assume_in_strand() // we are called in a handler that should be wrapped, so this is safe
-			.get()
-			.async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred_again)
-				{
-					_dbg1("Handler (again), size="<<bytes_transferred_again<<", ec="<<ec.message());
-					handler_receive(e_algo_receive::after_next_read, ec,bytes_transferred_again, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
-				}
-		);
 		_dbg1("Restarting async read - done");
 	} // restart_read
 	else throw std::runtime_error("Unknown state of algo.");
@@ -275,36 +310,66 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	g_recv_totall_size=0;
 	g_recv_started = t_mytime{};
 
-	if (options.size()<4) {
-		std::cout << "\nUsage: program inbuf   socket socket_spread   ios thread_per_ios  crypto_task [OPTIONS]\n"
-		<< "OPTIONS can be any of words: mport debug\n"
+	auto func_show_usage = []() {
+		std::cout << "\nUsage: program    inbuf   socket socket_spread   ios thread_per_ios  crypto_task  [OPTIONS]\n"
+		<< "OPTIONS can be any of words: mport debug mt_strand/mt_mutex\n"
 		<< "See code for more details. socket_spread must be 0 or 1.\n"
 		<< "crypto_task must be 0, or >0.\n"
 		<< "E.g.: program 32   2 0  4 16\n"
 		<< std::endl;
+	};
+
+	if (options.size()<4) {
+		func_show_usage();
+		return;
 	}
 
 	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows
 	const int cfg_num_socket = safe_atoi(options.at(1)); // 2 ; number of sockets
 	const int cfg_buf_socket_spread = safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
+	const int cfg_port_faketun = 2345;
+
 	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
 	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
+	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
+	for (const string & arg : options) if (arg=="mt_strand")
+		{ assert(cfg_mt_method==t_mt_method::mt_unset); cfg_mt_method=t_mt_method::mt_strand; }
+	for (const string & arg : options) if (arg=="mt_mutex")
+		{ assert(cfg_mt_method==t_mt_method::mt_unset); cfg_mt_method=t_mt_method::mt_mutex; }
+
+	if (cfg_mt_method == t_mt_method::mt_unset) {
+		func_show_usage();
+		std::cerr << endl << "ERROR: You must add option either mt_strand or mt_mutex (or other option of this family, see source)" << endl;
+		throw std::runtime_error("Must set mt method");
+	}
+
 
 	bool cfg_port_multiport = false;
 	for (const string & arg : options) if (arg=="mport") cfg_port_multiport=true;
 
 	auto func_show_summary = [&]() {
 		_goal("Summary: " << endl
-			<< "inbufs: " << cfg_num_inbuf << endl
-			<< "socket: " << cfg_num_socket << " in spread: " << cfg_buf_socket_spread << endl
-			<< "ios: " << cfg_num_ios << " per each there are threads: " << cfg_num_thread_per_ios << endl
-			<< "option: " << "mport="<<yesno(cfg_port_multiport)<<" " << endl
+			<< "  inbufs: " << cfg_num_inbuf << endl
+			<< "  socket: " << cfg_num_socket << " in spread: " << cfg_buf_socket_spread << endl
+			<< "  ios: " << cfg_num_ios << " per each there are threads: " << cfg_num_thread_per_ios << endl
+			<< "  option: " << "mport="<<yesno(cfg_port_multiport)<<" " << endl
+			<< endl
+			<< "Program functions:" << endl
+			<< "  reading UDP P2P: yes (async multithread as above)" << endl
+			<< "    decrypt E2E: faked (task=" << cfg_test_crypto_task << ")" << endl
+			<< "    decrypt P2P: equals E2E" << endl
+			<< "    re-route received P2P: no, throw away" << endl
+			<< "    re-route received P2P, do P2P-crypto: no" << endl
+			<< "    consume received P2P into our endpoint TUN: no, throw away" << endl
+			<< "  reading local TUN: *TODO* not yet" << endl // faked as UDP localhost port=" << cfg_port_faketun << endl
+			<< "    encrypt E2E: no" << endl
+			<< "    encrypt P2P: equals E2E" << endl
+			<< "    send out out endpoint data from TUN: no, throw away" << endl
 		);
 	};
 	func_show_summary();
 
-	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
 
 	_goal("Starting test. cfg_test_crypto_task="<<cfg_test_crypto_task);
 
@@ -403,6 +468,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 			auto & this_socket_and_strand = mysocket_in_strand.at(socket_nr);
 
+			// [asioflow]
 			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
