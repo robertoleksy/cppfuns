@@ -4,10 +4,10 @@
 all: a.out
 
 run: a.out
-	./a.out 32   2 0  4 4  0  mport
+	./a.out 32   2 0  4 4  0  mport  mt_strand
 
 run_bug: a.out
-	./a.out 32   2 0  4 4  0
+	./a.out 32   2 0  4 4  0  mt_strand
 
 run_args: a.out
 	./a.out $(ARGS)
