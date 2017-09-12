@@ -24,7 +24,7 @@ Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/
 #include <atomic>
 #include <mutex>
 
-bool g_debug = false;
+bool g_debug = true;
 
 #if 1
 #define _dbg4(X) {}
@@ -38,6 +38,7 @@ bool g_debug = false;
 #define _mark(X) {if(0)_dbg4(X);}
 #endif
 
+#define _erro(X) { std::cout<<"###### ERRROR: " << X<<std::endl; }
 #define _goal(X) { std::cout<<"====== " << X<<std::endl; }
 
 #define UsePtr(X) (* (X) )
@@ -94,6 +95,7 @@ class with_strand {
 
 
 std::atomic<bool> g_atomic_exit;
+std::atomic<int> g_running_tuntap_jobs;
 std::atomic<long int> g_recv_totall_count;
 std::atomic<long int> g_recv_totall_size;
 
@@ -306,13 +308,18 @@ string yesno(bool yes) {
 
 void asiotest_udpserv(std::vector<std::string> options) {
 	g_atomic_exit=false;
+	g_running_tuntap_jobs=0;
+
 	g_recv_totall_count=0;
 	g_recv_totall_size=0;
 	g_recv_started = t_mytime{};
 
 	auto func_show_usage = []() {
 		std::cout << "\nUsage: program    inbuf   socket socket_spread   ios thread_per_ios  crypto_task  [OPTIONS]\n"
-		<< "OPTIONS can be any of words: mport debug mt_strand/mt_mutex\n"
+		<< "OPTIONS can be any of words: \n"
+		<< "  mt_strand/mt_mutex\n"
+		<< "  tuntap_block/tuntap_async\n"
+		<< "  mport debug \n"
 		<< "See code for more details. socket_spread must be 0 or 1.\n"
 		<< "crypto_task must be 0, or >0.\n"
 		<< "E.g.: program 32   2 0  4 16\n"
@@ -324,15 +331,30 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		return;
 	}
 
-	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows
-	const int cfg_num_socket = safe_atoi(options.at(1)); // 2 ; number of sockets
+	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows (p2p)
+	const int cfg_num_socket_wire = safe_atoi(options.at(1)); // 2 ; number of sockets - wire (p2p)
 	const int cfg_buf_socket_spread = safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
-	const int cfg_port_faketun = 2345;
+	const int cfg_port_faketuntap = 2345;
 
 	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
 	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
 	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
+
+	const int cfg_num_weld_tuntap = safe_atoi(options.at(6)); // 16?
+	const int cfg_num_socket_tuntap = safe_atoi(options.at(7)); // 4?
+
+	bool tuntap_set=false;
+	bool cfg_tuntap_blocking=false;
+	for (const string & arg : options) if (arg=="tuntap_block")  {  tuntap_set=true;  cfg_tuntap_blocking=true;  }
+	for (const string & arg : options) if (arg=="tuntap_async")  {  tuntap_set=true; cfg_tuntap_blocking=false; }
+	if (!tuntap_set) {
+		func_show_usage();
+		std::cerr << endl << "ERROR: You must add option either tuntap_block or tuntap_async (or other option of this family, see source)" << endl;
+		throw std::runtime_error("Must set tuntap method");
+	}
+
+
 	for (const string & arg : options) if (arg=="mt_strand")
 		{ assert(cfg_mt_method==t_mt_method::mt_unset); cfg_mt_method=t_mt_method::mt_strand; }
 	for (const string & arg : options) if (arg=="mt_mutex")
@@ -351,7 +373,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	auto func_show_summary = [&]() {
 		_goal("Summary: " << endl
 			<< "  inbufs: " << cfg_num_inbuf << endl
-			<< "  socket: " << cfg_num_socket << " in spread: " << cfg_buf_socket_spread << endl
+			<< "  socket: " << cfg_num_socket_wire << " in spread: " << cfg_buf_socket_spread << endl
 			<< "  ios: " << cfg_num_ios << " per each there are threads: " << cfg_num_thread_per_ios << endl
 			<< "  option: " << "mport="<<yesno(cfg_port_multiport)<<" " << endl
 			<< endl
@@ -362,7 +384,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			<< "    re-route received P2P: no, throw away" << endl
 			<< "    re-route received P2P, do P2P-crypto: no" << endl
 			<< "    consume received P2P into our endpoint TUN: no, throw away" << endl
-			<< "  reading local TUN: *TODO* not yet" << endl // faked as UDP localhost port=" << cfg_port_faketun << endl
+			<< "  reading local TUNTAP: *TODO* faked as UDP localhost port=" << cfg_port_faketuntap << endl
+			<< "    using weld buffers: " << cfg_num_weld_tuntap << endl
+			<< "    using sockets: " << cfg_num_socket_tuntap << " that are: " << (cfg_tuntap_blocking ? "BLOCKING" : "async") << endl
 			<< "    encrypt E2E: no" << endl
 			<< "    encrypt P2P: equals E2E" << endl
 			<< "    send out out endpoint data from TUN: no, throw away" << endl
@@ -385,8 +409,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
+	vector<std::thread> thread_iosrun_tab; // threads for ios_run
+
 	_note("Starting ios worker - ios.run"); // ios.run()
-	vector<std::thread> thread_run_tab;
 	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
 		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
 			_goal("start worker: " << ios_nr << " " << ios_thread);
@@ -397,7 +422,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 					_dbg4("ios worker run (ios_thread="<<ios_thread<<" - COMPLETE");
 				}
 			);
-			thread_run_tab.push_back( std::move( thread_run ) );
+			thread_iosrun_tab.push_back( std::move( thread_run ) );
 		}
 	}
 
@@ -425,22 +450,40 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	);
 
-	c_inbuf_tab inbuf_tab(cfg_num_inbuf);
+
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) ); // ---
+
+	// sockets for (fake-)TUN connections:
+	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> tuntap_socket;
+	for (int nr_sock=0; nr_sock<cfg_num_socket_tuntap; ++nr_sock) {
+		int port_nr = cfg_port_faketuntap;
+		_note("Creating TUNTAP socket #"<<nr_sock<<" on port " << port_nr);
+		auto & one_ios = ios.at( 0 ); // same IOS for all TUN ;  nr_sock % ios.size() );
+
+		auto & socket_array = tuntap_socket;
+		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
+		boost::asio::ip::udp::socket & thesocket = socket_array.back().get_unsafe_assume_in_strand().get();
+
+		thesocket.open( asio::ip::udp::v4() );
+		// thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+		//thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::from_string("127.0.0.1") , port_nr ) );
+		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
+	}
 
 	// sockets for p2p connections:
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> wire_socket;
+	c_inbuf_tab inbuf_tab(cfg_num_inbuf);
 
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
-	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
+	for (int nr_sock=0; nr_sock<cfg_num_socket_wire; ++nr_sock) {
 		int port_nr = 9000;
 		if (cfg_port_multiport) port_nr += nr_sock;
-		_note("Creating socket #"<<nr_sock<<" on port " << port_nr);
+		_note("Creating wire (P2P) socket #"<<nr_sock<<" on port " << port_nr);
 		//wire_socket.push_back({ios,ios}); // active udp // <--- TODO why not?
 		auto & one_ios = ios.at( nr_sock % ios.size() );
-		wire_socket.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
-		_note("bind socket "<<nr_sock);
 
-		boost::asio::ip::udp::socket & thesocket = wire_socket.back().get_unsafe_assume_in_strand().get();
+		auto & socket_array = wire_socket;
+		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
+		boost::asio::ip::udp::socket & thesocket = socket_array.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
 		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
@@ -448,14 +491,132 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
-	_mark("sockets created");
+	_mark("wire sockets created");
 
 	asio::ip::udp::endpoint remote_ep;
 
-	std::mutex mutex_handlerflow_socket;
+	std::mutex mutex_handlerflow_socket_wire;
 
-	// add first work - handler-flow
-	auto func_spawn_flow = [&](int inbuf_nr, int socket_nr_raw) {
+
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+
+	// ---> tuntap: blocking version seems faster <---
+
+	const int cfg_size_tuntap_maxread=9000;
+	const int cfg_size_tuntap_buf=cfg_size_tuntap_maxread * 2;
+
+	struct c_weld {
+		unsigned char m_buf[cfg_size_tuntap_buf];
+		vector<size_t> m_fragment_pos;
+		size_t m_pos; ///< if ==0, then nothing yet is written; If ==10 then 0..9 is written, 10..end is free
+		bool m_reserved; ///< do some thread now read this now?
+
+		c_weld() { clear(); }
+		void clear() { m_pos=0; m_reserved=false; m_fragment_pos.clear(); }
+
+		size_t space_left() const { return cfg_size_tuntap_buf - m_pos; }
+		unsigned char & addr() { return m_buf[m_pos]; }
+	};
+
+	vector<c_weld> welds;
+	std::mutex welds_mutex;
+	for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
+
+	vector<std::thread> thread_tuntap_tab;
+
+	// tuntap: add first work - handler-flow
+	for (size_t socket_nr=0; socket_nr<cfg_num_socket_tuntap; ++socket_nr) {
+		_mark("Creating workflow (blocking - thread) for tuntap, socket="<<socket_nr);
+
+
+		std::thread thr = std::thread(
+			[socket_nr, &tuntap_socket, &welds, &welds_mutex]()
+			{
+				++g_running_tuntap_jobs;
+
+				while (!g_atomic_exit) {
+					auto & one_socket = tuntap_socket.at(socket_nr);
+					_note("TUNTAP reading");
+
+					size_t found_ix=0;
+					bool found_any=false;
+
+					{ // lock to find and reserve buffer a weld
+						std::lock_guard<std::mutex> lg(welds_mutex);
+						for (size_t i=0; i<welds.size(); ++i) {
+							if (! welds.at(i).m_reserved) {
+								if (welds.at(i).space_left() >= cfg_size_tuntap_maxread) {
+									found_ix=i; found_any=true;
+									break;
+								}
+							}
+						}
+
+						if (found_any) {
+							auto & weld = welds.at(found_ix);
+							weld.m_reserved=true; // we are using it now
+						}
+						else {
+							_erro("No free tuntap buffers!");
+						}
+					} // lock operations on welds
+
+					auto & found_weld = welds.at(found_ix);
+					size_t receive_size = found_weld.space_left();
+					if (receive_size > 1000) receive_size=1000;
+					auto buf_asio = asio::buffer( reinterpret_cast<void*>(found_weld.addr()) , receive_size );
+					_note("TUNTAP async read, on socket_nr="<<socket_nr<<" socket="<<addrvoid(one_socket)<<" "
+						<< "buffer size is: " << asio::buffer_size( buf_asio ));
+					try {
+						//one_socket.get_unsafe_assume_in_strand().get().open( asio::ip::udp::v4() ); // set it to IPv4 mode
+						//asio::ip::udp::endpoint ep;
+						one_socket.get_unsafe_assume_in_strand().get().receive(buf_asio); // <---
+					}
+					catch (std::exception &ex) {
+						_erro("Error in TUNTAP lambda: "<<ex.what());
+						std::this_thread::sleep_for( std::chrono::milliseconds(1000) );
+					}
+					catch (...) {
+						_erro("Error in TUNTAP lambda - unknown");
+						std::this_thread::sleep_for( std::chrono::milliseconds(1000) );
+					}
+
+					// process the TUN read data TODO
+
+				} // loop forever
+
+				--g_running_tuntap_jobs;
+			} // the lambda
+		);
+
+		thread_tuntap_tab.push_back( std::move(thr) );
+
+/*
+		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
+		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
+		_dbg1("async read, on mysocket="<<addrvoid(wire_socket));
+		{
+			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
+
+			auto & this_socket_and_strand = wire_socket.at(socket_nr);
+
+			// [asioflow]
+			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+						_dbg1("Handler (FIRST), size="<<bytes_transferred);
+						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
+					}
+			); // start async
+		}
+		*/
+	};
+	_mark("TUNTAP work started");
+
+
+	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+
+	// wire P2P: add first work - handler-flow
+	auto func_spawn_flow_wire = [&](int inbuf_nr, int socket_nr_raw) {
 		assert(inbuf_nr >= 0);
 		assert(socket_nr_raw >= 0);
 		int socket_nr = socket_nr_raw % wire_socket.size(); // spread it (rotate)
@@ -471,34 +632,63 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 			// [asioflow]
 			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
+						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
 					}
 			); // start async
 		}
 	} ;
 
 	if (cfg_buf_socket_spread==0) {
-		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {	func_spawn_flow( inbuf_nr , inbuf_nr); }
+		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {	func_spawn_flow_wire( inbuf_nr , inbuf_nr); }
 	}
 	else if (cfg_buf_socket_spread==1) {
 		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
-			int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(cfg_num_inbuf ) * cfg_num_socket );
+			int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(cfg_num_inbuf ) * cfg_num_socket_wire );
 			// int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(inbuf_tab.buffers_count() ) * wire_socket.size() );
-			func_spawn_flow( inbuf_nr , socket_nr );
+			func_spawn_flow_wire( inbuf_nr , socket_nr );
 		}
 	}
 
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+
 	_goal("All started");
 	func_show_summary();
 
 	_goal("Waiting for all threads to end");
+	_goal("Join stop threads");
 	thread_stop.join();
-	for (auto & thr : thread_run_tab) {
+
+	_goal("Stopping tuntap threads - unblocking them with some self-sent data");
+	while (g_running_tuntap_jobs>0) {
+		_note("Sending data to unblock...");
+
+		asio::io_service ios_local;
+		auto & one_ios = ios_local;
+
+		asio::ip::udp::socket socket_local(one_ios);
+		boost::asio::ip::udp::socket & thesocket = socket_local;
+		thesocket.open( asio::ip::udp::v4() );
+		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
+		unsigned char data[1]; data[0]=0;
+		auto buff = asio::buffer( reinterpret_cast<void*>(&data[0]), 1 );
+		auto dst = asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , cfg_port_faketuntap  );
+		_note("Sending to dst=" << dst);
+		thesocket.send_to( buff , dst );
+
+		std::this_thread::sleep_for( std::chrono::milliseconds(10) );
+	}
+	_goal("Join tuntap threads");
+	for (auto & thr : thread_tuntap_tab) {
 		thr.join();
 	}
+
+	_goal("Join iosrun threads");
+	for (auto & thr : thread_iosrun_tab) {
+		thr.join();
+	}
+
 	_goal("All threads done");
 
 }
