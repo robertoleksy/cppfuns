@@ -427,19 +427,20 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	c_inbuf_tab inbuf_tab(cfg_num_inbuf);
 
-	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> mysocket_in_strand;
+	// sockets for p2p connections:
+	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> wire_socket;
 
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 	for (int nr_sock=0; nr_sock<cfg_num_socket; ++nr_sock) {
 		int port_nr = 9000;
 		if (cfg_port_multiport) port_nr += nr_sock;
 		_note("Creating socket #"<<nr_sock<<" on port " << port_nr);
-		//mysocket_in_strand.push_back({ios,ios}); // active udp // <--- TODO why not?
+		//wire_socket.push_back({ios,ios}); // active udp // <--- TODO why not?
 		auto & one_ios = ios.at( nr_sock % ios.size() );
-		mysocket_in_strand.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
+		wire_socket.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
 		_note("bind socket "<<nr_sock);
 
-		boost::asio::ip::udp::socket & thesocket = mysocket_in_strand.back().get_unsafe_assume_in_strand().get();
+		boost::asio::ip::udp::socket & thesocket = wire_socket.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
 		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
@@ -457,16 +458,16 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	auto func_spawn_flow = [&](int inbuf_nr, int socket_nr_raw) {
 		assert(inbuf_nr >= 0);
 		assert(socket_nr_raw >= 0);
-		int socket_nr = socket_nr_raw % mysocket_in_strand.size(); // spread it (rotate)
+		int socket_nr = socket_nr_raw % wire_socket.size(); // spread it (rotate)
 		_mark("Creating workflow: buf="<<inbuf_nr<<" socket="<<socket_nr);
 
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
 		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
-		_dbg1("async read, on mysocket="<<addrvoid(mysocket_in_strand));
+		_dbg1("async read, on mysocket="<<addrvoid(wire_socket));
 		{
 			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
 
-			auto & this_socket_and_strand = mysocket_in_strand.at(socket_nr);
+			auto & this_socket_and_strand = wire_socket.at(socket_nr);
 
 			// [asioflow]
 			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
@@ -484,7 +485,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	else if (cfg_buf_socket_spread==1) {
 		for (size_t inbuf_nr = 0; inbuf_nr<cfg_num_inbuf; ++inbuf_nr) {
 			int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(cfg_num_inbuf ) * cfg_num_socket );
-			// int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(inbuf_tab.buffers_count() ) * mysocket_in_strand.size() );
+			// int socket_nr = static_cast<int>( inbuf_nr / static_cast<float>(inbuf_tab.buffers_count() ) * wire_socket.size() );
 			func_spawn_flow( inbuf_nr , socket_nr );
 		}
 	}
