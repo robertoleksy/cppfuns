@@ -503,14 +503,23 @@ void asiotest_udpserv(std::vector<std::string> options) {
 }
 
 
-void asiotest(std::vector<std::string> options)
-{
-	_mark("asiotest");
 
-  int port_num = 3456;
-
+int main(int argc, const char **argv) {
+	std::vector< std::string> options;
+	for (int i=1; i<argc; ++i) options.push_back(argv[i]);
+	for (const string & arg : options) if ((arg=="dbg")||(arg=="debug")||(arg=="d")) g_debug = true;
+	_goal("Starting program");
   asiotest_udpserv(options);
-  return; // !!!
+	_goal("Normal exit");
+	return 0;
+}
+
+
+
+// ========================================================
+// unused - example
+void old_tests() {
+  int port_num = 3456;
 
 	asio::io_service ios;
   asio::ip::tcp protocol_tcp = asio::ip::tcp::v4();
@@ -559,17 +568,5 @@ void asiotest(std::vector<std::string> options)
 		_note("read: ["<<std::string(&inbuf_data[0],read_size)<<"]");
 	}
 
-}
-
-
-
-int main(int argc, const char **argv) {
-	std::vector< std::string> options;
-	for (int i=1; i<argc; ++i) options.push_back(argv[i]);
-	for (const string & arg : options) if ((arg=="dbg")||(arg=="debug")||(arg=="d")) g_debug = true;
-	_goal("Starting program");
-	asiotest(options);
-	_goal("Normal exit");
-	return 0;
 }
 
