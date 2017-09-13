@@ -4,10 +4,10 @@
 all: a.out
 
 run: a.out
-	./a.out 32   2 0  4 4  0  mport
+	./a.out 32   2 0  2 2  0  2 1   192.168.0.107 9000  mport  mt_strand  tuntap_block
 
 run_bug: a.out
-	./a.out 32   2 0  4 4  0
+	./a.out 32   2 0  4 4  0  32 1  192.168.0.107 9000  mt_strand tuntap_block 
 
 tsan: tsan.out
 	./tsan.out
@@ -24,7 +24,7 @@ helgrind: g.out
 	valgrind --tool=helgrind ./g.out
 
 a.out: a.cpp
-	clang++ -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -pthread
+	clang++ -g3 -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -pthread
 
 g.out: a.cpp
 	clang++ --std=c++14 -Wall -g3 a.cpp -o g.out -lboost_system -pthread
