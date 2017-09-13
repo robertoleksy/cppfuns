@@ -440,9 +440,57 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	}
 
+
+	// --- tuntap classes / data ---
+	const int cfg_size_tuntap_maxread=9000;
+	const int cfg_size_tuntap_buf=cfg_size_tuntap_maxread * 2;
+
+	static const size_t fragment_pos_max=32;
+	struct c_weld {
+		unsigned char m_buf[cfg_size_tuntap_buf];
+
+		uint16_t m_fragment_pos[fragment_pos_max]; ///< positions of ends fragments,
+		/// as constant-size array, with separate index in it
+		/// if array has values {5,10,11} then fragments are ranges: [0..4], [5..9], [10]
+
+		uint16_t m_fragment_pos_ix; ///< index in above array
+
+		size_t m_pos; ///< if ==0, then nothing yet is written; If ==10 then 0..9 is written, 10..end is free
+		bool m_reserved; ///< do some thread now read this now?
+
+		c_weld() { clear(); }
+		void clear() {
+			m_reserved=false;
+			m_pos=0;
+			m_fragment_pos_ix=0;
+		}
+
+		void add_fragment(uint16_t size) {
+			assert(m_fragment_pos_ix < fragment_pos_max); // can not add anything since no place to store indexes
+
+			// e.g. buf=10 (array is 0..9), m_pos=0 (nothing used), size=10 -> allowed
+			assert(size <= cfg_size_tuntap_buf - m_pos);
+
+			m_pos += size;
+			m_fragment_pos[ m_fragment_pos_ix ] = m_pos;
+			++m_fragment_pos_ix;
+		}
+		size_t space_left() const {
+			if (m_fragment_pos_ix>=fragment_pos_max) return 0; // can not add anything since no place to store indexes
+			return cfg_size_tuntap_buf - m_pos;
+		}
+		unsigned char * addr_at_pos() { return & m_buf[m_pos]; }
+		unsigned char * addr_all() { return & m_buf[0]; }
+	};
+
+	// --- welds var ---
+	vector<c_weld> welds;
+	std::mutex welds_mutex;
+
+	// stop / stats
 	_dbg1("The stop thread"); // exit flag --> ios.stop()
 	std::thread thread_stop(
-		[&ios] {
+		[&ios, &welds, &welds_mutex] {
 			for (int i=0; true; ++i) {
 				std::this_thread::sleep_for( std::chrono::seconds(1) );
 
@@ -450,9 +498,17 @@ void asiotest_udpserv(std::vector<std::string> options) {
 				auto now_recv_totall_size = g_recv_totall_size.load();
 				double now_recv_ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - g_recv_started.load().m_time) ).count() / 1000.;
 				double now_recv_speed = now_recv_totall_size / now_recv_ellapsed_sec; // B/s
-				_goal("Waiting, i="<<i<<" so far recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
-					<< " speed="<< (now_recv_speed/1000000) <<" MB/s"
-				);
+				std::ostringstream oss;
+				oss << "Loop, i="<<i<<" recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
+					<< " speed="<< (now_recv_speed/1000000) <<" MB/s";
+				oss << " Welds: ";
+				{
+					std::lock_guard<std::mutex> lg(welds_mutex);
+					for (const auto & weld : welds) {
+						oss << "[" << weld.space_left() << " left; " << (weld.m_reserved ? "RESERVED" : "not-resv") << "]";
+					}
+				}
+				_goal(oss.str());
 				if (g_atomic_exit) {
 					_note("Exit flag is set, exiting loop and will stop program");
 					break;
@@ -516,49 +572,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	// ---> tuntap: blocking version seems faster <---
 
-	const int cfg_size_tuntap_maxread=9000;
-	const int cfg_size_tuntap_buf=cfg_size_tuntap_maxread * 2;
 
-	static const size_t fragment_pos_max=32;
-	struct c_weld {
-		unsigned char m_buf[cfg_size_tuntap_buf];
-
-		uint16_t m_fragment_pos[fragment_pos_max]; ///< positions of ends fragments,
-		/// as constant-size array, with separate index in it
-		/// if array has values {5,10,11} then fragments are ranges: [0..4], [5..9], [10]
-
-		uint16_t m_fragment_pos_ix; ///< index in above array
-
-		size_t m_pos; ///< if ==0, then nothing yet is written; If ==10 then 0..9 is written, 10..end is free
-		bool m_reserved; ///< do some thread now read this now?
-
-		c_weld() { clear(); }
-		void clear() {
-			m_reserved=false;
-			m_pos=0;
-			m_fragment_pos_ix=0;
-		}
-
-		void add_fragment(uint16_t size) {
-			assert(m_fragment_pos_ix < fragment_pos_max); // can not add anything since no place to store indexes
-
-			// e.g. buf=10 (array is 0..9), m_pos=0 (nothing used), size=10 -> allowed
-			assert(size <= cfg_size_tuntap_buf - m_pos);
-
-			m_pos += size;
-			m_fragment_pos[ m_fragment_pos_ix ] = m_pos;
-			++m_fragment_pos_ix;
-		}
-		size_t space_left() const {
-			if (m_fragment_pos_ix>=fragment_pos_max) return 0; // can not add anything since no place to store indexes
-			return cfg_size_tuntap_buf - m_pos;
-		}
-		unsigned char * addr_at_pos() { return & m_buf[m_pos]; }
-		unsigned char * addr_all() { return & m_buf[0]; }
-	};
-
-	vector<c_weld> welds;
-	std::mutex welds_mutex;
 	for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
 
 	vector<std::thread> thread_tuntap_tab;
@@ -615,8 +629,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						//asio::ip::udp::endpoint ep;
 
 						_note("TUNTAP read, on tuntap_socket_nr="<<tuntap_socket_nr<<" socket="<<addrvoid(one_socket)<<" "
-						<<"into weld "<<found_ix<<" "
-						<< "buffer size is: " << asio::buffer_size( buf_asio ) << " buf_ptr="<<buf_ptr);
+							<<"into weld "<<found_ix<<" "
+							<< "buffer size is: " << asio::buffer_size( buf_asio ) << " buf_ptr="<<buf_ptr);
 						asio::ip::udp::endpoint ep;
 						// [asioflow] read
 						auto read_size = size_t { one_socket.get_unsafe_assume_in_strand().get().receive_from(buf_asio, ep) };
@@ -630,20 +644,17 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							c_weld & the_weld = welds.at(found_ix); // optimize: no need for mutex for this one
 							the_weld.add_fragment(read_size);
 
-							if (!(the_weld.space_left() >= cfg_size_tuntap_maxread)) { // almost full
+							bool should_send = ! (the_weld.space_left() >= cfg_size_tuntap_maxread) ;
+							_note("TUNTAP (weld "<<found_ix<<") decided to: " << (should_send ? "SEND-NOW" : "not-send-yet")
+								<< " space left " << the_weld.space_left() << " vs needed space " << cfg_size_tuntap_maxread);
+
+							if (should_send) { // almost full
 								// send it
 								// wire selection
 
 								// select wire
 								int wire_socket_nr = ((my_random*4823)%4913) % wire_socket.size(); // TODO better pseudo-random
 								++my_random;
-								auto & this_wire_socket_and_strand = wire_socket.at(wire_socket_nr);
-
-								size_t receive_size = the_weld.m_pos;
-								assert(receive_size>0);
-								void * send_buf_ptr = reinterpret_cast<void*>(found_weld.addr_all());
-								assert(send_buf_ptr);
-								auto send_buf_asio = asio::buffer( send_buf_ptr , receive_size );
 
 								_goal("TUNTAP sending out the data from tuntap socket="<<tuntap_socket_nr
 									<<" via wire_socket_nr="<<wire_socket_nr);
@@ -653,6 +664,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								// select peg
 								asio::ip::udp::endpoint peer_peg = peer_pegs.at(0);
 
+
+								/*
 								// [asioflow]
 								_erro("WARNING this is probably UB (thread race)"); // XXX FIXME [thread]
 								this_wire_socket_and_strand.get_unsafe_assume_in_strand().get().async_send_to( // <-- THREAD I am NOT in strang, not allowed to use this !!! XXX
@@ -671,8 +684,47 @@ void asiotest_udpserv(std::vector<std::string> options) {
 										} // lock
 									}
 								);
+								*/
+
+
+								auto & mysocket = wire_socket.at(wire_socket_nr);
+								mysocket.get_strand().post(
+									mysocket.wrap(
+										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
+											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix);
+
+											auto & wire = wire_socket.at(wire_socket_nr);
+
+											auto send_buf_asio = asio::buffer( welds.at(found_ix).addr_all() , welds.at(found_ix).m_pos );
+
+											wire.get_unsafe_assume_in_strand().get().async_send_to(
+												send_buf_asio,
+												peer_peg,
+												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+													_dbg1("TUNTAP: data passed on and sent to peer. wire_socket_nr="<<wire_socket_nr
+														<<" ec="<<ec.message()
+													);
+													{
+														_dbg1("TUNTAP - DONE SENDING (weld "<<found_ix<<") ... taking lock");
+														std::lock_guard<std::mutex> lg(welds_mutex);
+														auto & weld = welds.at(found_ix);
+														_dbg1("TUNTAP - DONE SENDING - clearing weld " << found_ix);
+														weld.clear();
+													} // lock
+												}
+											);
+											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
+
+
+										} // delayed TUNTAP->WIRE
+									) // wrap
+								); // start(post) handler: TUNTAP->WIRE start
+
+								_note("TUNTAP->Wire work is started(post) by weld " << found_ix << " to P2P socket="<<wire_socket_nr);
+
 							} // send the full weld
-							else { // weld extended with data
+							else { // do not send. weld extended with data
+								_note("Removing reservation on weld " << found_ix);
 								the_weld.m_reserved=false;
 							}
 						} // lock to un-reserve
@@ -685,8 +737,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						);
 						break; // exit loop
 						*/
-
-
 					}
 					catch (std::exception &ex) {
 						_erro("Error in TUNTAP lambda: "<<ex.what());
