@@ -30,5 +30,5 @@ g.out: a.cpp
 	clang++ --std=c++14 -Wall -g3 a.cpp -o g.out -lboost_system -pthread
 
 tsan.out: a.cpp
-	clang++ a.cpp --std=c++14 -fsanitize=thread -g3 -Wall -o tsan.out -lboost_system -pthread
+	clang++ a.cpp --std=c++14 -fsanitize=thread -g3 -O0 -Wall -o tsan.out -lboost_system -pthread
 

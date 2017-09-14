@@ -229,13 +229,13 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		// [asioflow]
 		if (cfg_mt_method == t_mt_method::mt_strand) {
 			mysocket.get_strand().post(
-				mysocket.wrap(
+//				mysocket.wrap(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
 				{
 					_dbg1("Handler (restart read)");
 					handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 				}
-				)
+//				)
 			);
 		}
 		else if (cfg_mt_method == t_mt_method::mt_mutex) {
@@ -652,9 +652,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						{
 								auto & mysocket = wire_socket.at(0);
 								mysocket.get_strand().post(
-									mysocket.wrap(
+									//mysocket.wrap(
 										[]() { _goal("TEST-in-wrapped - all ok in test. +++"); }
-									)
+									//)
 								);
 								_goal("TEST-posted");
 						}
@@ -710,7 +710,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
-									mysocket.wrap(
+//									mysocket.wrap(
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
 											_note("TUNTAP-WIRE handler1 (in strand). TUNTAP->WIRE will be now sent."
 												<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr);
@@ -736,7 +736,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 											_note("TUNTAP-WIRE handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
 										} // delayed TUNTAP->WIRE
-									) // wrap
+//									) // wrap
 								); // start(post) handler: TUNTAP->WIRE start
 
 								_note("TUNTAP-WIRE posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
@@ -801,7 +801,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	// wire P2P: add first work - handler-flow
-	auto func_spawn_flow_wire = [&](int inbuf_nr, int socket_nr_raw) {
+	auto func_spawn_flow_wire = [&wire_socket, &inbuf_tab, &mutex_handlerflow_socket_wire](int inbuf_nr, int socket_nr_raw) {
 		assert(inbuf_nr >= 0);
 		assert(socket_nr_raw >= 0);
 		int socket_nr = socket_nr_raw % wire_socket.size(); // spread it (rotate)
@@ -815,13 +815,15 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 			auto & this_socket_and_strand = wire_socket.at(socket_nr);
 
-			// [asioflow]
-			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
-					}
-			); // start async
+			this_socket_and_strand.get_strand().post([&, inbuf_nr] { // TODO capture list
+				// [asioflow]
+				this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+						[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+							_dbg1("Handler (FIRST), size="<<bytes_transferred);
+							handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
+						}
+				); // start async
+			}); // post
 		}
 	} ;
 
