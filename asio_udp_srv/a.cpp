@@ -890,12 +890,15 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			auto & this_socket_and_strand = wire_socket.at(socket_nr);
 
 			// [asioflow]
-			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
-					}
-			); // start async
+			this_socket_and_strand.get_strand().post([&, inbuf_nr] {
+				this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
+						[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+							_dbg1("Handler (FIRST), size="<<bytes_transferred);
+							handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
+						}
+					); // start async
+				} // post lambda
+			); // post
 		}
 	} ;
 
