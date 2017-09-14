@@ -443,7 +443,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		ios.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
-	int cfg_num_ios_tuntap = cfg_num_ios;
+	int cfg_num_ios_tuntap = 1; // TODO option
+	int cfg_num_thread_per_ios_tuntap = 1; // TODO option
 
 	std::vector<std::unique_ptr<asio::io_service>> ios_tuntap;
 	for (int i=0; i<cfg_num_ios_tuntap; ++i) {
@@ -471,6 +472,22 @@ void asiotest_udpserv(std::vector<std::string> options) {
 				}
 			);
 			thread_iosrun_tab.push_back( std::move( thread_run ) );
+		}
+	}
+
+	vector<std::thread> thread_iosrun_tab_tuntap; // threads for ios_run TUNTAP
+	_note("TUNTAP Starting ios worker - ios.run"); // ios.run()
+	for (int ios_nr = 0; ios_nr < cfg_num_ios_tuntap; ++ios_nr) {
+		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios_tuntap; ++ios_thread) {
+			_goal("TUNTAP start worker: " << ios_nr << " " << ios_thread);
+			std::thread thread_run(
+				[&ios, ios_thread, ios_nr] {
+					_goal("TUNTAP ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
+					ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+					_dbg4("TUNTAP ios worker run (ios_thread="<<ios_thread<<" - COMPLETE");
+				}
+			);
+			thread_iosrun_tab_tuntap.push_back( std::move( thread_run ) );
 		}
 	}
 
@@ -562,7 +579,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	for (int nr_sock=0; nr_sock<cfg_num_socket_tuntap; ++nr_sock) {
 		int port_nr = cfg_port_faketuntap;
 		_note("Creating TUNTAP socket #"<<nr_sock<<" on port " << port_nr);
-		auto & one_ios = ios.at( 0 ); // same IOS for all TUN ;  nr_sock % ios.size() );
+		auto & one_ios = ios_tuntap.at( 0 ); // same IOS for all TUN   // ;  nr_sock % ios.size() );
 
 		auto & socket_array = tuntap_socket;
 		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
@@ -928,6 +945,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	_goal("Join iosrun threads");
 	for (auto & thr : thread_iosrun_tab) {
+		thr.join();
+	}
+	_goal("Join iosrun threads (TUNTAP)");
+	for (auto & thr : thread_iosrun_tab_tuntap) {
 		thr.join();
 	}
 
