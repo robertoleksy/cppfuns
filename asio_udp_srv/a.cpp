@@ -646,8 +646,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						// [asioflow] read ***
 						auto read_size = size_t { one_socket.get_unsafe_assume_in_strand().get().receive_from(buf_asio, ep) };
 
-						_goal("TUNTAP socket="<<tuntap_socket_nr<<": got data from ep="<<ep<<" read_size="<<read_size
-						<<" weld "<<found_ix);
+						_goal("TUNTAP ***BLOCKING READ DONE*** socket="<<tuntap_socket_nr<<": got data from ep="<<ep<<" read_size="<<read_size
+						<<" weld "<<found_ix<<"\n\n");
 
 						{
 								auto & mysocket = wire_socket.at(0);
@@ -675,6 +675,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 								// select wire
 								int wire_socket_nr = ((my_random*4823)%4913) % wire_socket.size(); // TODO better pseudo-random
+								wire_socket_nr = 0;
 								++my_random;
 
 								_goal("TUNTAP sending out the data from tuntap socket="<<tuntap_socket_nr
@@ -706,6 +707,38 @@ void asiotest_udpserv(std::vector<std::string> options) {
 									}
 								);
 								*/
+
+
+
+								{ // test DUPA
+								auto & mysocket = wire_socket.at(wire_socket_nr);
+								mysocket.get_strand().post(
+									mysocket.wrap(
+										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
+											_note("TUNTAP-DUPA handler1 (in strand).");
+
+											auto & wire = wire_socket.at(wire_socket_nr);
+
+/*
+											auto send_buf_asio = asio::buffer( welds.at(found_ix).addr_all() , welds.at(found_ix).m_pos );
+											wire.get_unsafe_assume_in_strand().get().async_send_to(
+												send_buf_asio,
+												peer_peg,
+												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+													_note("TUNTAP-DUPA handler2 (sent done).");
+													_note("TUNTAP-DUPA handler2 (sent done)... will clear");
+													_note("TUNTAP-DUPA handler2 (sent done)... ok clear - ALL DONE OK ++++++++++++++++++++++++++++++++");
+												}
+											); // asio send
+											*/
+
+											_note("TUNTAP-DUPA handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
+										} // delayed TUNTAP->WIRE
+									) // wrap
+								); // start(post) handler: TUNTAP->WIRE start
+
+								_note("TUNTAP-DUPA posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
+								} // test DUPA
 
 
 								auto & mysocket = wire_socket.at(wire_socket_nr);
