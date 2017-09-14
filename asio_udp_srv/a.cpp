@@ -6,6 +6,30 @@ Do not use it.
 
 Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/ticket/13193
 
+-----------
+TODO - ERROR:
+
+When you send to 2345 UDP localhost (the fake-tuntap) lots of data it will eventually lock up, because
+the .post'ed handlers re NOT executing for some reson, it looks like this:
+
+
+659: ------ TEST-posted
+670: ###### TUNTAP (weld 1) decided to: SEND-NOW space left 8000 vs needed space 9000
+682: ------ TUNTAP sending out the data from tuntap socket=0 via wire_socket_nr=0
+740: TUNTAP-DUPA posted: weld=1 to P2P socket=0
+775: TUNTAP-WIRE posted: weld=1 to P2P socket=0
+602: TUNTAP reading
+624: 
+
+  ....  and look here - the handlers of this 3 posted works are NOT executed this time ....
+
+@@@@@@ ERRROR: No free tuntap buffers!
+
+
+-----------
+
+
+
 
 */
 
@@ -26,7 +50,7 @@ Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/
 
 bool g_debug = true;
 
-#define print_debug(X) { ::std::ostringstream _dbg_oss; _dbg_oss<<__LINE__<<": "<<X;  ::std::cerr<<_dbg_oss.str()<<::std::endl; }
+#define print_debug(X) { ::std::ostringstream _dbg_oss; _dbg_oss<<__LINE__<<": "<<X<<::std::endl;  ::std::cerr<<_dbg_oss.str(); }
 
 #if 1
 #define _dbg4(X) {}
@@ -39,7 +63,7 @@ bool g_debug = true;
 #define _mark(X) {if(0)_dbg4(X);}
 #endif
 
-#define _erro(X) { print_debug("\n\n@@@@@@ ERRROR: " << X ); }
+#define _erro(X) { print_debug("\n\n@@@@@@ ERRROR: " << X << "\n\n" ); }
 #define _mark(X) { print_debug(    "###### " << X ); }
 #define _goal(X) { print_debug(    "------ " << X ); }
 
@@ -229,17 +253,17 @@ _note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&i
 		// [asioflow]
 		if (cfg_mt_method == t_mt_method::mt_strand) {
 			mysocket.get_strand().post(
-				mysocket.wrap(
+				//mysocket.wrap(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
 				{
 					_dbg1("Handler (restart read)");
 					handler_receive(e_algo_receive::after_processing_done, boost::system::error_code(),0, mysocket, inbuf_tab,inbuf_nr, mutex_handlerflow_socket);
 				}
-				)
+				//)
 			);
 		}
 		else if (cfg_mt_method == t_mt_method::mt_mutex) {
-			mysocket.get_strand().post(
+			mysocket.get_unsafe_assume_in_strand().get().get_io_service().post(
 				[&mysocket, &inbuf_tab , inbuf_nr, & mutex_handlerflow_socket]()
 				{
 					_dbg1("Handler (restart read)");
@@ -652,9 +676,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						{
 								auto & mysocket = wire_socket.at(0);
 								mysocket.get_strand().post(
-									mysocket.wrap(
+									//mysocket.wrap(
 										[]() { _goal("TEST-in-wrapped - all ok in test. +++"); }
-									)
+									//)
 								);
 								_goal("TEST-posted");
 						}
@@ -713,7 +737,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								{ // test DUPA
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
-									mysocket.wrap(
+									//mysocket.wrap(
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
 											_note("TUNTAP-DUPA handler1 (in strand).");
 
@@ -734,7 +758,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 											_note("TUNTAP-DUPA handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
 										} // delayed TUNTAP->WIRE
-									) // wrap
+									// ) // wrap
 								); // start(post) handler: TUNTAP->WIRE start
 
 								_note("TUNTAP-DUPA posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
@@ -743,7 +767,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
-									mysocket.wrap(
+									// mysocket.wrap(
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
 											_note("TUNTAP-WIRE handler1 (in strand). TUNTAP->WIRE will be now sent."
 												<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr);
@@ -769,7 +793,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 											_note("TUNTAP-WIRE handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
 										} // delayed TUNTAP->WIRE
-									) // wrap
+									// ) // wrap
 								); // start(post) handler: TUNTAP->WIRE start
 
 								_note("TUNTAP-WIRE posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
