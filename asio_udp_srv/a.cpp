@@ -26,20 +26,22 @@ Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/
 
 bool g_debug = true;
 
+#define print_debug(X) { ::std::ostringstream _dbg_oss; _dbg_oss<<__LINE__<<": "<<X;  ::std::cerr<<_dbg_oss.str()<<::std::endl; }
+
 #if 1
 #define _dbg4(X) {}
-#define _dbg1(X) { if (g_debug) { std::cout<<X<<std::endl; } }
+#define _dbg1(X) { if (g_debug) { print_debug(X); } }
 #define _note(X) { _dbg1(X); }
-#define _mark(X) _note("****** " << X);
 #else
-#define _dbg4(X) {if(0){ std::cout<<X<<std::endl;} }
+#define _dbg4(X) {if(0) { print_debug(X); } }
 #define _dbg1(X) {if(0)_dbg4(X);}
 #define _note(X) {if(0)_dbg4(X);}
 #define _mark(X) {if(0)_dbg4(X);}
 #endif
 
-#define _erro(X) { std::cout<<"###### ERRROR: " << X<<std::endl; }
-#define _goal(X) { std::cout<<"====== " << X<<std::endl; }
+#define _erro(X) { print_debug("\n\n@@@@@@ ERRROR: " << X ); }
+#define _mark(X) { print_debug(    "###### " << X ); }
+#define _goal(X) { print_debug(    "------ " << X ); }
 
 #define UsePtr(X) (* (X) )
 #define addrvoid(X) ( static_cast<const void*>( & (X) ) )
@@ -500,7 +502,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	std::thread thread_stop(
 		[&ios, &welds, &welds_mutex] {
 			for (int i=0; true; ++i) {
-				std::this_thread::sleep_for( std::chrono::seconds(1) );
+				std::this_thread::sleep_for( std::chrono::seconds(2) );
 
 				auto time_now = std::chrono::steady_clock::now();
 				auto now_recv_totall_size = g_recv_totall_size.load();
@@ -548,7 +550,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
-	// sockets for p2p connections:
+	// sockets for wire p2p connections:
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> wire_socket;
 	c_inbuf_tab inbuf_tab(cfg_num_inbuf);
 
@@ -651,10 +653,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								auto & mysocket = wire_socket.at(0);
 								mysocket.get_strand().post(
 									mysocket.wrap(
-										[]() { _goal("TEST - WRAPPED posted - running inside callback.. OK...."); }
+										[]() { _goal("TEST-in-wrapped - all ok in test. +++"); }
 									)
 								);
-								_goal("TEST - WRAPPED posted (should run now!");
+								_goal("TEST-posted");
 						}
 
 						// process data, and un-reserve it so that others can add more to it
@@ -664,7 +666,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							the_weld.add_fragment(read_size);
 
 							bool should_send = ! (the_weld.space_left() >= cfg_size_tuntap_maxread) ;
-							_note("TUNTAP (weld "<<found_ix<<") decided to: " << (should_send ? "SEND-NOW" : "not-send-yet")
+							_mark("TUNTAP (weld "<<found_ix<<") decided to: " << (should_send ? "SEND-NOW" : "not-send-yet")
 								<< " space left " << the_weld.space_left() << " vs needed space " << cfg_size_tuntap_maxread);
 
 							if (should_send) { // almost full
@@ -710,8 +712,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								mysocket.get_strand().post(
 									mysocket.wrap(
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
-											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix
-											<<" XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+											_note("TUNTAP-WIRE handler1 (in strand). TUNTAP->WIRE will be now sent."
+												<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr);
 
 											auto & wire = wire_socket.at(wire_socket_nr);
 
@@ -721,26 +723,23 @@ void asiotest_udpserv(std::vector<std::string> options) {
 												send_buf_asio,
 												peer_peg,
 												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-													_dbg1("TUNTAP: data passed on and sent to peer. wire_socket_nr="<<wire_socket_nr
-														<<" ec="<<ec.message()
+													_note("TUNTAP-WIRE handler2 (sent done). ec="<<ec.message()<<"."
+														<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr
 													);
-													{
-														_dbg1("TUNTAP - DONE SENDING (weld "<<found_ix<<") ... taking lock");
-														std::lock_guard<std::mutex> lg(welds_mutex);
-														auto & weld = welds.at(found_ix);
-														_dbg1("TUNTAP - DONE SENDING - clearing weld " << found_ix);
-														weld.clear();
-													} // lock
+													std::lock_guard<std::mutex> lg(welds_mutex); // lock
+													auto & weld = welds.at(found_ix);
+													_note("TUNTAP-WIRE handler2 (sent done)... will clear");
+													weld.clear();
+													_note("TUNTAP-WIRE handler2 (sent done)... ok clear - ALL DONE OK ++++++++++++++++++++++++++++++++");
 												}
-											);
-											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
+											); // asio send
 
-
+											_note("TUNTAP-WIRE handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
 										} // delayed TUNTAP->WIRE
 									) // wrap
 								); // start(post) handler: TUNTAP->WIRE start
 
-								_note("TUNTAP->Wire work is started(post) by weld " << found_ix << " to P2P socket="<<wire_socket_nr);
+								_note("TUNTAP-WIRE posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
 
 							} // send the full weld
 							else { // do not send. weld extended with data
