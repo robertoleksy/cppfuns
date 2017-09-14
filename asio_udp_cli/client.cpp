@@ -27,7 +27,8 @@ int main(int argc, char *argv[])
 
 	bool interactive=true;
 
-	size_t bytes, count, request_length;
+	size_t bytes, request_length;
+	long int count;
 	if (argc >= 2+3+1) {
 		interactive=false;
 		message = argv[3];
@@ -40,10 +41,11 @@ int main(int argc, char *argv[])
 	udp::resolver resolver(io_service);
 	udp::endpoint endpoint = *resolver.resolve({udp::v4(), host, port});
 
-	std::cout << endl << "Usage example: give command: " << endl 
-		<< "  foo 0 1    - this will send text foo (1 time)" << std::endl
-		<< "  abc 50 1000   - this will send message of letter 'a' repeated 50 times. This msg will be sent 1000 times."
-		<<std::endl;
+	std::cout << endl << "Usage example: give command: " << endl
+		<< "  foo 0 1    - send text 'foo' (1 time) \n"
+		<< "  abc 50 1000   - send message 'a...aa' (50 a), send this 1000 times \n"
+	// 	<< "  abc 50 -1   - send message 'a...aa' (50 a), send this in infinite loop \n"
+		<< std::endl;
 
 	std::cout << std::endl;
 
@@ -68,15 +70,28 @@ int main(int argc, char *argv[])
 			std::fill_n(request, request_length, ch);
 		}
 
-		std::cerr << "Sending now " << count << " time(s) an UDP packet ";
+		std::cerr << "Sending now ";
+		if (count>=0) std::cerr << count; else std::cerr << "(INFINITE)";
+		std::cerr << " time(s) an UDP packet ";
 		std::cerr << "datagram: size " << request_length << " B ";
-		std::cerr << "data begins with \"" 
+		std::cerr << "data begins with \""
 			<< std::string(request, request + std::min(static_cast<size_t>(10),request_length))
 			<< "\"" << std::endl;
 		std::cerr << endl;
-		for (size_t i=0; i<count; i++) {
+		auto func_send = [&]() {
 			s.send_to(boost::asio::buffer(request, request_length), endpoint);
+		};
+		if (count>=0) {
+			for (size_t i=0; i<count; i++) func_send();
+		} else {
+			for (;;) {
+				volatile bool volatile_stop=0; /// just to stop UB of always-infinite loop
+				func_send();
+				if (volatile_stop) break;
+			}
 		}
+
+		if (!interactive) break;
 	}
 /*
 	char reply[max_length];
