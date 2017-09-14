@@ -417,6 +417,14 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		ios.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
+	int cfg_num_ios_tuntap = cfg_num_ios;
+
+	std::vector<std::unique_ptr<asio::io_service>> ios_tuntap;
+	for (int i=0; i<cfg_num_ios_tuntap; ++i) {
+		_goal("Creating ios (TUNTAP) nr "<<i);
+		ios_tuntap.emplace_back( std::make_unique<asio::io_service>() );
+	}
+
 	// have any long-term work to do (for ios)
 	boost::asio::signal_set signals( * ios.at(0), SIGINT);
 	signals.async_wait( handler_signal_term );
@@ -632,11 +640,22 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							<<"into weld "<<found_ix<<" "
 							<< "buffer size is: " << asio::buffer_size( buf_asio ) << " buf_ptr="<<buf_ptr);
 						asio::ip::udp::endpoint ep;
-						// [asioflow] read
+
+						// [asioflow] read ***
 						auto read_size = size_t { one_socket.get_unsafe_assume_in_strand().get().receive_from(buf_asio, ep) };
 
 						_goal("TUNTAP socket="<<tuntap_socket_nr<<": got data from ep="<<ep<<" read_size="<<read_size
 						<<" weld "<<found_ix);
+
+						{
+								auto & mysocket = wire_socket.at(0);
+								mysocket.get_strand().post(
+									mysocket.wrap(
+										[]() { _goal("TEST - WRAPPED posted - running inside callback.. OK...."); }
+									)
+								);
+								_goal("TEST - WRAPPED posted (should run now!");
+						}
 
 						// process data, and un-reserve it so that others can add more to it
 						{ // lock
@@ -691,7 +710,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								mysocket.get_strand().post(
 									mysocket.wrap(
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
-											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix);
+											_note("(wrapped) - starting TUNTAP->WIRE transfer, wire "<<wire_socket_nr<<" weld " <<found_ix
+											<<" XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
 
 											auto & wire = wire_socket.at(wire_socket_nr);
 
