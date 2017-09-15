@@ -4,10 +4,10 @@
 all: a.out
 
 run: a.out
-	./a.out 32   2 0  2 2  0  2 1   192.168.0.107 9000  mport  mt_strand  tuntap_block
+	./a.out 32   2 0  2 2  0  1 1   192.168.0.107 9000  mport  mt_strand  tuntap_block
 
 run_bug: a.out
-	./a.out 32   2 0  4 4  0  32 1  192.168.0.107 9000  mt_strand tuntap_block 
+	./a.out 32   2 0  4 4  0  1 1  192.168.0.107 9000  mt_strand tuntap_block 
 
 tsan: tsan.out
 	./tsan.out

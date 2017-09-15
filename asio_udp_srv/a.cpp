@@ -125,6 +125,10 @@ std::atomic<int> g_running_tuntap_jobs;
 std::atomic<long int> g_recv_totall_count;
 std::atomic<long int> g_recv_totall_size;
 
+std::atomic<long int> g_state_tuntap2wire_started;
+std::atomic<long int> g_state_tuntap2wire_in_handler1;
+std::atomic<long int> g_state_tuntap2wire_in_handler2;
+
 struct t_mytime {
 	using t_timevalue = std::chrono::time_point<std::chrono::steady_clock>;
 	t_timevalue m_time;
@@ -342,8 +346,12 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	g_recv_totall_size=0;
 	g_recv_started = t_mytime{};
 
+	g_state_tuntap2wire_started=0;
+	g_state_tuntap2wire_in_handler1=0;
+	g_state_tuntap2wire_in_handler2=0;
+
 	auto func_show_usage = []() {
-		std::cout << "\nUsage: program    inbuf   socket socket_spread   ios thread_per_ios  crypto_task  [OPTIONS]\n"
+		std::cout << "\nUsage: program    inbuf   socket socket_spread   ios thread_per_ios  crypto_task  tuntap_welds tuntap_sockets  [OPTIONS]\n"
 		<< "OPTIONS can be any of words: \n"
 		<< "  mt_strand/mt_mutex\n"
 		<< "  tuntap_block/tuntap_async\n"
@@ -538,7 +546,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	vector<c_weld> welds;
 	std::mutex welds_mutex;
 
-	// stop / stats
+	// stop / show stats
 	_dbg1("The stop thread"); // exit flag --> ios.stop()
 	std::thread thread_stop(
 		[&ios, &welds, &welds_mutex] {
@@ -552,6 +560,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 				std::ostringstream oss;
 				oss << "Loop, i="<<i<<" recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
 					<< " speed="<< (now_recv_speed/1000000) <<" MB/s";
+				oss << "Event: ";
+				oss << "tuntap2wire(start="<<g_state_tuntap2wire_started<<" h1="<<g_state_tuntap2wire_in_handler1
+					<<" h2="<<g_state_tuntap2wire_in_handler2<<")";
 				oss << " Welds: ";
 				{
 					std::lock_guard<std::mutex> lg(welds_mutex);
@@ -663,7 +674,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						}
 						else {
 							_erro("No free tuntap buffers!");
-							break ; // <---
+	//						std::this_thread::sleep_for(std::chrono::milliseconds(1)); // wait for free buffer to start blocking read
+							continue ; // <---
 						}
 					} // lock operations on welds
 
@@ -788,6 +800,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
 											_note("TUNTAP-WIRE handler1 (in strand). TUNTAP->WIRE will be now sent."
 												<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr);
+											++g_state_tuntap2wire_in_handler1;
 
 											auto & wire = wire_socket.at(wire_socket_nr);
 
@@ -796,10 +809,12 @@ void asiotest_udpserv(std::vector<std::string> options) {
 											wire.get_unsafe_assume_in_strand().get().async_send_to(
 												send_buf_asio,
 												peer_peg,
-												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
+												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred)
+												{
 													_note("TUNTAP-WIRE handler2 (sent done). ec="<<ec.message()<<"."
 														<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr
 													);
+													++g_state_tuntap2wire_in_handler2;
 													std::lock_guard<std::mutex> lg(welds_mutex); // lock
 													auto & weld = welds.at(found_ix);
 													_note("TUNTAP-WIRE handler2 (sent done)... will clear");
@@ -814,6 +829,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								); // start(post) handler: TUNTAP->WIRE start
 
 								_note("TUNTAP-WIRE posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
+								++g_state_tuntap2wire_started;
 
 							} // send the full weld
 							else { // do not send. weld extended with data
