@@ -192,7 +192,7 @@ enum class t_mt_method {
 };
 t_mt_method cfg_mt_method = t_mt_method::mt_unset;
 
-void handler_receive(const e_algo_receive algo_step, const boost::system::error_code & ec, std::size_t bytes_transferred,
+void handler_receive(const e_algo_receive algo_step, const boost::system::error_code ec, std::size_t bytes_transferred,
 	with_strand< ThreadObject<asio::ip::udp::socket> > & mysocket,
 	c_inbuf_tab & inbuf_tab, size_t inbuf_nr,
 	std::mutex & mutex_handlerflow_socket)
@@ -202,8 +202,8 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 		return;
 	}
 
-auto & inbuf = inbuf_tab.get(inbuf_nr);
-_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab)
+	auto & inbuf = inbuf_tab.get(inbuf_nr);
+	_note("handler for inbuf_nr="<<inbuf_nr<<" for tab at " << static_cast<void*>(&inbuf_tab)
 		<< " inbuf at " << static_cast<void*>( & inbuf)
 		<< " from remote IP " << inbuf.m_ep << " bytes_transferred="<<bytes_transferred
 		<< " read: ["<<std::string( & inbuf.m_data[0] , bytes_transferred)<<"]"
