@@ -380,6 +380,26 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	const int cfg_num_weld_tuntap = safe_atoi(options.at(6)); // 16?
 	const int cfg_num_socket_tuntap = safe_atoi(options.at(7)); // 4?
 
+	int cfg_tuntap_buf_sleep = -1; // sleep in tuntap loop waiting for buffer, see code for meaning
+	int cfg_tuntap_ios = -1; // use ios for tuntap sockets: -1=use first one from general/wire ios;
+	int cfg_tuntap_ios_threads_per_one = 1; // for each ios of tuntap (if any ios are created for tuntap) how many threads to .run it in
+
+	for (const string & arg : options) {
+		auto pos=arg.find('=');
+		if (pos==string::npos) continue;
+		if (pos>=arg.size()) continue;
+		string name=arg.substr(0,pos);
+		string val=arg.substr(pos+1);
+		_note("argument ["<<name<<"] = ["<<val<<"]");
+		if (name=="tuntap_sleep") { cfg_tuntap_buf_sleep=safe_atoi(val); }
+		else if (name=="tuntap_ios") { cfg_tuntap_ios=safe_atoi(val); }
+		else if (name=="tuntap_ios_thread") { cfg_tuntap_ios_threads_per_one=safe_atoi(val); }
+		else {
+			_erro("Unknown option named '"<<name<<"'");
+			throw std::runtime_error("Unknown option");
+		}
+	}
+
 	vector<asio::ip::udp::endpoint> peer_pegs;
 	//peer_pegs.emplace_back( asio::ip::address_v4::from_string("127.0.0.1") , 9000 );
 	_note("Adding peer");
@@ -387,7 +407,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		asio::ip::address_v4::from_string(options.at(8)) ,
 		safe_atoi(options.at(9)  ));
 	_note("Got peer(s) " << peer_pegs.size());
-
 
 	bool tuntap_set=false;
 	bool cfg_tuntap_blocking=false;
@@ -431,6 +450,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			<< "    re-route received P2P, do P2P-crypto: no" << endl
 			<< "    consume received P2P into our endpoint TUN: no, throw away" << endl
 			<< "  reading local TUNTAP: *TODO* faked as UDP localhost port=" << cfg_port_faketuntap << endl
+			<< "    IOS: "<<cfg_tuntap_ios << " * threads="<<cfg_tuntap_ios_threads_per_one << endl
+			<< "    details: sleep="<<cfg_tuntap_buf_sleep << endl
 			<< "    using weld buffers: " << cfg_num_weld_tuntap << endl
 			<< "    using sockets: " << cfg_num_socket_tuntap << " that are: " << (cfg_tuntap_blocking ? "BLOCKING" : "async") << endl
 			<< "    encrypt E2E: no" << endl
@@ -451,11 +472,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		ios.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
-	int cfg_num_ios_tuntap = 1; // TODO option
 	int cfg_num_thread_per_ios_tuntap = 1; // TODO option
 
 	std::vector<std::unique_ptr<asio::io_service>> ios_tuntap;
-	for (int i=0; i<cfg_num_ios_tuntap; ++i) {
+	for (int i=0; i<cfg_tuntap_ios; ++i) {
 		_goal("Creating ios (TUNTAP) nr "<<i);
 		ios_tuntap.emplace_back( std::make_unique<asio::io_service>() );
 	}
@@ -485,8 +505,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	vector<std::thread> thread_iosrun_tab_tuntap; // threads for ios_run TUNTAP
 	_note("TUNTAP Starting ios worker - ios.run"); // ios.run()
-	for (int ios_nr = 0; ios_nr < cfg_num_ios_tuntap; ++ios_nr) {
-		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios_tuntap; ++ios_thread) {
+	for (int ios_nr = 0; ios_nr < cfg_tuntap_ios; ++ios_nr) {
+		for (int ios_thread=0; ios_thread<cfg_tuntap_ios_threads_per_one; ++ios_thread) {
 			_goal("TUNTAP start worker: " << ios_nr << " " << ios_thread);
 			std::thread thread_run(
 				[&ios, ios_thread, ios_nr] {
@@ -590,10 +610,24 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	for (int nr_sock=0; nr_sock<cfg_num_socket_tuntap; ++nr_sock) {
 		int port_nr = cfg_port_faketuntap;
 		_note("Creating TUNTAP socket #"<<nr_sock<<" on port " << port_nr);
-		auto & one_ios = ios_tuntap.at( 0 ); // same IOS for all TUN   // ;  nr_sock % ios.size() );
-
+		auto func_select_ios = [&ios, cfg_tuntap_ios, &ios_tuntap, nr_sock]() -> asio::io_service & {
+			if (cfg_tuntap_ios==-2) {
+				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from global/wire ios (select from all of them)");
+				return * ios.at( nr_sock % ios.size() );
+			}
+			if (cfg_tuntap_ios==-1) {
+				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from global/wire ios (first one)");
+				return * ios.at(0);
+			}
+			if (cfg_tuntap_ios>0) {
+				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from TUNTAP own ios");
+				return * ios_tuntap.at( nr_sock % cfg_tuntap_ios);
+			}
+			throw std::runtime_error("My error in selecting ios for tuntap");
+		};
+		auto & one_ios = func_select_ios();
 		auto & socket_array = tuntap_socket;
-		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
+		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(one_ios, one_ios) );
 		boost::asio::ip::udp::socket & thesocket = socket_array.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
@@ -645,7 +679,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 
 		std::thread thr = std::thread(
-			[tuntap_socket_nr, &tuntap_socket, &welds, &welds_mutex, &wire_socket, &peer_pegs]()
+			[tuntap_socket_nr, &tuntap_socket, &welds, &welds_mutex, &wire_socket, &peer_pegs, cfg_tuntap_buf_sleep]()
 			{
 				++g_running_tuntap_jobs;
 
@@ -674,7 +708,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 						}
 						else {
 							_erro("No free tuntap buffers!");
-	//						std::this_thread::sleep_for(std::chrono::milliseconds(1)); // wait for free buffer to start blocking read
+							auto sleep_time = cfg_tuntap_buf_sleep;
+							if (sleep_time > 0) {
+								std::this_thread::sleep_for(std::chrono::milliseconds(1)); // wait for free buffer to start blocking read
+							}
 							continue ; // <---
 						}
 					} // lock operations on welds
