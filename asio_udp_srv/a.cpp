@@ -620,7 +620,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 				double now_recv_speed = now_recv_totall_size / now_recv_ellapsed_sec; // B/s
 				std::ostringstream oss;
 				oss << "Loop, i="<<i<<" recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
-					<< " speed="<< (now_recv_speed/1000000) <<" MB/s";
+					<< " speed="<< (now_recv_speed/1000000) <<" MB/s ";
 				oss << "Event: ";
 				oss << "tuntap2wire(start="<<g_state_tuntap2wire_started<<" h1="<<g_state_tuntap2wire_in_handler1
 					<<" h2="<<g_state_tuntap2wire_in_handler2<<")";
