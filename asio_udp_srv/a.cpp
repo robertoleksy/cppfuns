@@ -336,6 +336,48 @@ string yesno(bool yes) {
 	return "no";
 }
 
+struct t_mycmdline {
+	vector<string> m_arg;
+	vector<bool> m_used;
+	void add(const string & arg) { m_arg.push_back(arg); m_used.push_back(false); }
+};
+
+// T must be integral. Will set target_var with the number from "foo=42", when name="foo". Provide the cmdline;
+// Throws if required==true but value is not found.
+// Returns if the value was found.
+template<typename T>
+bool set_from_cmdline(T & target_var, const string & name, t_mycmdline &cmdline, bool required=false) {
+	for (size_t ix=0; ix<cmdline.m_arg.size(); ++ix) {
+		const string & arg = cmdline.m_arg.at(ix);
+		auto pos=arg.find('=');
+		if (pos==string::npos) continue;
+		if (pos>=arg.size()) continue;
+		string one_name=arg.substr(0,pos);
+		if (one_name == name) {
+			string val=arg.substr(pos+1);
+			_note("argument ["<<name<<"] = ["<<val<<"] (ix="<<ix<<")");
+			target_var = safe_atoi(val);
+			cmdline.m_used.at(ix) = true; // it was used
+			return true;
+		}
+	}
+	if (required) { _erro("You need to provide argument '"<<name<<"'."); throw std::runtime_error("Missing arg"); }
+	return false;
+}
+
+int get_from_cmdline(const string & name, t_mycmdline &cmdline) {
+	int the_val=0;
+	set_from_cmdline(the_val, name, cmdline, true);
+	return the_val;
+}
+
+int get_from_cmdline(const string & name, t_mycmdline &cmdline, int def) {
+	int the_val=0;
+	bool got_it = set_from_cmdline(the_val, name, cmdline, false);
+	if (!got_it) the_val=def;
+	return the_val;
+}
+
 void asiotest_udpserv(std::vector<std::string> options) {
 	// the main "loop"
 
@@ -351,61 +393,53 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	g_state_tuntap2wire_in_handler2=0;
 
 	auto func_show_usage = []() {
-		std::cout << "\nUsage: program    inbuf   socket socket_spread   ios thread_per_ios  crypto_task  tuntap_welds tuntap_sockets  [OPTIONS]\n"
-		<< "OPTIONS can be any of words: \n"
+		std::cout << "\nUsage: \n"
+		<< "./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand \n"
+		<< "Also can ADD this options:\n"
 		<< "  mt_strand/mt_mutex\n"
 		<< "  tuntap_block/tuntap_async\n"
-		<< "  mport debug \n"
-		<< "See code for more details. socket_spread must be 0 or 1.\n"
-		<< "crypto_task must be 0, or >0.\n"
-		<< "E.g.: program 32   2 0  4 16\n"
+		<< "  mport debug\n"
+		<< "See code for more details, search func_cmdline.\n"
 		<< std::endl;
 	};
 
-	if (options.size()<4) {
-		func_show_usage();
-		return;
-	}
+	t_mycmdline mycmdline;
+	for (const string & arg : options) mycmdline.add(arg);
+	auto func_cmdline = [&mycmdline](const string &name) -> int { return get_from_cmdline(name,mycmdline); } ;
+	auto func_cmdline_def = [&mycmdline](const string &name, int def) -> int { return get_from_cmdline(name,mycmdline,def); } ;
 
-	const int cfg_num_inbuf = safe_atoi(options.at(0)); // 32 ; this is also the number of flows (p2p)
-	const int cfg_num_socket_wire = safe_atoi(options.at(1)); // 2 ; number of sockets - wire (p2p)
-	const int cfg_buf_socket_spread = safe_atoi(options.at(2)); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
+	const int cfg_num_inbuf = func_cmdline("wire_buf"); // e.g. 32 ; this is also the number of flows (wire/p2p connections)
+	const int cfg_num_socket_wire = func_cmdline("wire_sock"); // 2 ; number of sockets - wire (p2p)
+	const int cfg_buf_socket_spread = func_cmdline_def("wire_spread",0); // 0 is: (buf0,sock0),(b1,s1),(b2,s0),(b3,s1),(b4s0) ; 1 is (b0,s0),(b1,s0),(b2,s1),(b3,s1)
 
 	const int cfg_port_faketuntap = 2345;
 
-	const int cfg_num_ios = safe_atoi(options.at(3)); // 4
-	const int cfg_num_thread_per_ios = safe_atoi(options.at(4)); // 16
-	cfg_test_crypto_task = safe_atoi(options.at(5)); // 10
+	const int cfg_num_ios = func_cmdline("wire_ios"); // 4
+	const int cfg_num_thread_per_ios = func_cmdline("wire_ios_thr"); // 16
 
-	const int cfg_num_weld_tuntap = safe_atoi(options.at(6)); // 16?
-	const int cfg_num_socket_tuntap = safe_atoi(options.at(7)); // 4?
+	cfg_test_crypto_task = func_cmdline("crypto"); // 10
+
+	const int cfg_num_weld_tuntap = func_cmdline("tuntap_weld"); // safe_atoi(options.at(6)); // 16?
+	const int cfg_num_socket_tuntap = func_cmdline("tuntap_sock"); // 4?
 
 	int cfg_tuntap_buf_sleep = -1; // sleep in tuntap loop waiting for buffer, see code for meaning
-	int cfg_tuntap_ios = -1; // use ios for tuntap sockets: -1=use first one from general/wire ios;
-	int cfg_tuntap_ios_threads_per_one = 1; // for each ios of tuntap (if any ios are created for tuntap) how many threads to .run it in
 
-	for (const string & arg : options) {
-		auto pos=arg.find('=');
-		if (pos==string::npos) continue;
-		if (pos>=arg.size()) continue;
-		string name=arg.substr(0,pos);
-		string val=arg.substr(pos+1);
-		_note("argument ["<<name<<"] = ["<<val<<"]");
-		if (name=="tuntap_sleep") { cfg_tuntap_buf_sleep=safe_atoi(val); }
-		else if (name=="tuntap_ios") { cfg_tuntap_ios=safe_atoi(val); }
-		else if (name=="tuntap_ios_thread") { cfg_tuntap_ios_threads_per_one=safe_atoi(val); }
-		else {
-			_erro("Unknown option named '"<<name<<"'");
-			throw std::runtime_error("Unknown option");
-		}
-	}
+	const int cfg_tuntap_ios = func_cmdline("tuntap_ios"); // use ios for tuntap sockets: -1=use first one from general/wire ios;
+	const int cfg_tuntap_ios_threads_per_one = func_cmdline("tuntap_ios_thr"); // for each ios of tuntap (if any ios are created for tuntap) how many threads to .run it in
+
+	cfg_tuntap_buf_sleep = func_cmdline("tuntap_weld_sleep");
 
 	vector<asio::ip::udp::endpoint> peer_pegs;
 	//peer_pegs.emplace_back( asio::ip::address_v4::from_string("127.0.0.1") , 9000 );
 	_note("Adding peer");
-	peer_pegs.emplace_back(
-		asio::ip::address_v4::from_string(options.at(8)) ,
-		safe_atoi(options.at(9)  ));
+	{
+		auto opt_addr = options.at(0);
+		auto opt_port = options.at(1);
+		_note("Peer address ["<<opt_addr<<"] and prot ["<<opt_port<<"]");
+		peer_pegs.emplace_back(
+			asio::ip::address_v4::from_string(opt_addr) ,
+			safe_atoi(opt_port));
+	}
 	_note("Got peer(s) " << peer_pegs.size());
 
 	bool tuntap_set=false;
@@ -417,7 +451,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		std::cerr << endl << "ERROR: You must add option either tuntap_block or tuntap_async (or other option of this family, see source)" << endl;
 		throw std::runtime_error("Must set tuntap method");
 	}
-
 
 	for (const string & arg : options) if (arg=="mt_strand")
 		{ assert(cfg_mt_method==t_mt_method::mt_unset); cfg_mt_method=t_mt_method::mt_strand; }
@@ -472,8 +505,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		ios.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
-	int cfg_num_thread_per_ios_tuntap = 1; // TODO option
-
 	std::vector<std::unique_ptr<asio::io_service>> ios_tuntap;
 	for (int i=0; i<cfg_tuntap_ios; ++i) {
 		_goal("Creating ios (TUNTAP) nr "<<i);
@@ -487,6 +518,16 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	vector<std::thread> thread_iosrun_tab; // threads for ios_run
+
+
+	for (size_t ix=0; ix<mycmdline.m_arg.size(); ++ix) {
+		const string & arg = mycmdline.m_arg.at(ix);
+		auto pos=arg.find('=');
+		if ( (pos!=string::npos) && (mycmdline.m_used.at(ix)==false) ) {
+			_erro("Unused/unknown argument: " << arg << " (ix="<<ix<<")" );
+			throw std::runtime_error("Unused argument");
+		}
+	}
 
 	_note("Starting ios worker - ios.run"); // ios.run()
 	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
