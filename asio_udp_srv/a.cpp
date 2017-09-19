@@ -504,6 +504,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		ios_tuntap.emplace_back( std::make_unique<asio::io_service>() );
 	}
 
+
 	// have any long-term work to do (for ios)
 	boost::asio::signal_set signals( * ios.at(0), SIGINT);
 	signals.async_wait( handler_signal_term );
@@ -525,17 +526,24 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	_note("Starting ios worker - ios.run"); // ios.run()
 	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
 		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
-			_goal("start worker: " << ios_nr << " " << ios_thread);
+			_goal("start worker: ios_nr=" << ios_nr << " ios_thread=" << ios_thread);
 			std::thread thread_run(
 				[&ios, ios_thread, ios_nr] {
-					_goal("ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
-					ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
-					_dbg4("ios worker run (ios_thread="<<ios_thread<<" - COMPLETE");
+					_goal("ios (global/wire) worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
+					while (!g_atomic_exit) {
+						ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+						_note("ios (global/wire) worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr <<") is done... will restat?");
+						std::this_thread::sleep_for( std::chrono::milliseconds(1000) );
+					}
+					_note("ios (global/wire) worker run (ios_thread="<<ios_thread<<" - COMPLETE");
 				}
 			);
 			thread_iosrun_tab.push_back( std::move( thread_run ) );
 		}
 	}
+
+/*
+THIS CODE IS BAD (wrong ios array is used)
 
 	vector<std::thread> thread_iosrun_tab_tuntap; // threads for ios_run TUNTAP
 	_note("TUNTAP Starting ios worker - ios.run"); // ios.run()
@@ -552,7 +560,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			thread_iosrun_tab_tuntap.push_back( std::move( thread_run ) );
 		}
 	}
-
+*/
 
 	// --- tuntap classes / data ---
 	const int cfg_size_tuntap_maxread=9000;
@@ -1035,9 +1043,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		thr.join();
 	}
 	_goal("Join iosrun threads (TUNTAP)");
+	/*
 	for (auto & thr : thread_iosrun_tab_tuntap) {
 		thr.join();
-	}
+	}*/
 
 	_goal("All threads done");
 
