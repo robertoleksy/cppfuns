@@ -4,8 +4,7 @@
 all: a.out
 
 run: a.out
-	./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand
-	# ./a.out 32   2 0  2 2  0  1 1   192.168.0.107 9000  mport  mt_strand  tuntap_block tuntap_sleep=1 tuntap_ios=1
+	./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=-1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand
 
 tsan: tsan.out
 	./tsan.out
