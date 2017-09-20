@@ -319,13 +319,6 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 	else throw std::runtime_error("Unknown state of algo.");
 }
 
-namespace nettools {
-
-
-// void socket_reuse_same_process(
-
-
-};
 
 int safe_atoi(const std::string & s) {
 	return atoi(s.c_str());
@@ -672,8 +665,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		boost::asio::ip::udp::socket & thesocket = socket_array.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
-		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
-		//thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::from_string("127.0.0.1") , port_nr ) );
+		// thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
@@ -693,8 +685,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		boost::asio::ip::udp::socket & thesocket = socket_array.back().get_unsafe_assume_in_strand().get();
 
 		thesocket.open( asio::ip::udp::v4() );
-		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
-		// thesocket.bind( asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , 9000 ) );
+		// thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
@@ -1026,7 +1017,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		asio::ip::udp::socket socket_local(one_ios);
 		boost::asio::ip::udp::socket & thesocket = socket_local;
 		thesocket.open( asio::ip::udp::v4() );
-		thesocket.set_option(boost::asio::ip::udp::socket::reuse_address(true));
 		unsigned char data[1]; data[0]=0;
 		auto buff = asio::buffer( reinterpret_cast<void*>(&data[0]), 1 );
 		auto dst = asio::ip::udp::endpoint( asio::ip::address::from_string("127.0.0.1") , cfg_port_faketuntap  );
