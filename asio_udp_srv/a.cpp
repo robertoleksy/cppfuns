@@ -662,6 +662,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> tuntap_socket;
 	for (int nr_sock=0; nr_sock<cfg_num_socket_tuntap; ++nr_sock) {
 		int port_nr = cfg_port_faketuntap;
+		if (cfg_port_multiport) port_nr += nr_sock;
 		_note("Creating TUNTAP socket #"<<nr_sock<<" on port " << port_nr);
 		auto func_select_ios = [cfg_tuntap_ios, &ios_wire, &ios_tuntap, nr_sock]() -> asio::io_service & {
 			if (cfg_tuntap_ios==-2) {
