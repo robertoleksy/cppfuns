@@ -1,9 +1,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 #include <boost/asio.hpp>
 
-using namespace boost::asio::ip;
+using boost::asio::ip::udp;
+using std::endl;
 
 enum { max_length = 655035 };
 
@@ -12,14 +14,13 @@ int main(int argc, char *argv[])
 	//const char *host = "192.168.1.103";
 	//const char *host = "127.0.0.1";
 	//const char *port = "9000";
-	if (argc < 4) {
-		std::cout << "Usage: ./client <host> <port> <number_of_endpoints" << std::endl;
-		std::cout << "or ./client <host> <port> <number_of_endpoints> <msg> <msgbytes> <count> " << std::endl;
+	if (argc < 3) {
+		std::cout << "Usage: ./client <host> <port>" << std::endl;
+		std::cout << "or ./client <host> <port> <msg> <msgbytes> <count> " << std::endl;
 		return 1;
 	}
 	const char *host = argv[1];
-	const int port = std::stoi(argv[2]);
-	const int number_of_endpoints = std::stoi(argv[3]);
+	const char *port = argv[2];
 	boost::asio::io_service io_service;
 
 	std::string message;
@@ -29,18 +30,15 @@ int main(int argc, char *argv[])
 	size_t bytes, count, request_length;
 	if (argc >= 2+3+1) {
 		interactive=false;
-		message = argv[4];
-		bytes = atoi(argv[5]);
-		count = atoi(argv[6]);
+		message = argv[3];
+		bytes = atoi(argv[4]);
+		count = atoi(argv[5]);
 	}
 
 	udp::socket s(io_service, udp::endpoint(udp::v4(), 0));
 
 	udp::resolver resolver(io_service);
-	std::vector<udp::endpoint> endpoints;
-	for (int i=0; i<number_of_endpoints; i++) {
-		endpoints.push_back(udp::endpoint(address::from_string(host), port + i));
-	}
+	udp::endpoint endpoint = *resolver.resolve({udp::v4(), host, port});
 
 	std::cout << std::endl << "Usage example: give command: " << std::endl
 		<< "  foo 0 1    - this will send text foo (1 time)" << std::endl
@@ -72,12 +70,12 @@ int main(int argc, char *argv[])
 
 		std::cerr << "Sending now " << count << " time(s) an UDP packet ";
 		std::cerr << "datagram: size " << request_length << " B ";
-		std::cerr << "data begins with \""
+		std::cerr << "data begins with \"" 
 			<< std::string(request, request + std::min(static_cast<size_t>(10),request_length))
 			<< "\"" << std::endl;
-		std::cerr << std::endl;
+		std::cerr << endl;
 		for (size_t i=0; i<count; i++) {
-			s.send_to(boost::asio::buffer(request, request_length), endpoints.at(i%number_of_endpoints));
+			s.send_to(boost::asio::buffer(request, request_length), endpoint);
 		}
 	}
 /*

@@ -4,10 +4,7 @@
 all: a.out
 
 run: a.out
-	./a.out 32   2 0  4 4  0  mport  mt_strand
-
-run_bug: a.out
-	./a.out 32   2 0  4 4  0  mt_strand
+	./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=-1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand mport
 
 run_args: a.out
 	./a.out $(ARGS)
@@ -27,7 +24,7 @@ helgrind: g.out
 	valgrind --tool=helgrind ./g.out
 
 a.out: a.cpp
-	clang++ -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -pthread
+	clang++ -g3 -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -pthread
 
 g.out: a.cpp
 	clang++ --std=c++14 -Wall -g3 a.cpp -o g.out -lboost_system -pthread
