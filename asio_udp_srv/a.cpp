@@ -118,6 +118,8 @@ std::atomic<long int> g_state_tuntap2wire_started;
 std::atomic<long int> g_state_tuntap2wire_in_handler1;
 std::atomic<long int> g_state_tuntap2wire_in_handler2;
 
+int g_stage_sleep_time=500;
+
 struct t_mytime {
 	using t_timevalue = std::chrono::time_point<std::chrono::steady_clock>;
 	t_timevalue m_time;
@@ -555,6 +557,11 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	}
 	_note("TUNTAP: ios threads are running.");
 
+
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+	_goal("All ios run are running");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+
 	// --- tuntap classes / data ---
 	const int cfg_size_tuntap_maxread=9000;
 	const int cfg_size_tuntap_buf=cfg_size_tuntap_maxread * 2;
@@ -601,8 +608,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	vector<c_weld> welds;
 	std::mutex welds_mutex;
 
+
 	// stop / show stats
-	_dbg1("The stop thread"); // exit flag --> ios.stop()
+	_goal("The stop thread"); // exit flag --> ios.stop()
 	std::thread thread_stop(
 		[&ios_general,&ios_wire,&ios_tuntap, &ios_general_work, &ios_wire_work, &ios_tuntap_work, &welds, &welds_mutex] {
 			for (int i=0; true; ++i) {
@@ -656,7 +664,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	);
 
-	// std::this_thread::sleep_for( std::chrono::milliseconds(100) ); // ---
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+	_goal("Stop threat running");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
 
 	// sockets for (fake-)TUN connections:
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> tuntap_socket;
@@ -709,13 +719,13 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		thesocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , port_nr ) );
 	}
 
-	_mark("wire sockets created");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+	_goal("TUNTAP and WIRE sockets are ready");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
 
 	asio::ip::udp::endpoint remote_ep;
 
 	std::mutex mutex_handlerflow_socket_wire;
-
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	// ---> tuntap: blocking version seems faster <---
 
@@ -864,9 +874,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		tuntap_flow.push_back( std::move(thr) );
 
 	};
-	_mark("TUNTAP work started");
-
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+	_goal("TUNTAP workflows are running");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
 
 	// wire P2P: add first work - handler-flow
 	auto func_spawn_flow_wire = [&](int inbuf_nr, int socket_nr_raw) {
@@ -907,9 +917,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	}
 
-	// std::this_thread::sleep_for( std::chrono::milliseconds(100) );
-
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
 	_goal("All started");
+	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
+
 	func_show_summary();
 
 	_goal("Waiting for all threads to end");
