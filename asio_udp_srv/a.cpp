@@ -824,26 +824,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								// select peg
 								asio::ip::udp::endpoint peer_peg = peer_pegs.at(0);
 
-								/*
-								// [asioflow]
-								_erro("WARNING this is probably UB (thread race)"); // XXX FIXME [thread]
-								this_wire_socket_and_strand.get_unsafe_assume_in_strand().get().async_send_to( // <-- THREAD I am NOT in strang, not allowed to use this !!! XXX
-									send_buf_asio,
-									peer_peg,
-									[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-										_note("TUNTAP: data passed on and sent to peer. wire_socket_nr="<<wire_socket_nr
-											<<" ec="<<ec.message()
-										);
-										{
-											_goal("TUNTAP - DONE SENDING ... taking lock");
-											std::lock_guard<std::mutex> lg(welds_mutex);
-											auto & weld = welds.at(found_ix);
-											_goal("TUNTAP - DONE SENDING - clearing weld " << found_ix);
-											weld.clear();
-										} // lock
-									}
-								);
-								*/
 
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
@@ -889,14 +869,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							}
 						} // lock to un-reserve
 
-						/*
-						one_socket.get_unsafe_assume_in_strand().get().async_receive(buf_asio
-							, [](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-								_goal("TUNTAP received, bytes_transferred="<<bytes_transferred<<" ec="<<ec.message());
-							}
-						);
-						break; // exit loop
-						*/
 					}
 					catch (std::exception &ex) {
 						_erro("Error in TUNTAP lambda: "<<ex.what());
@@ -908,7 +880,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 					}
 
 					// process the TUN read data TODO
-
 				} // loop forever
 
 				--g_running_tuntap_jobs;
@@ -917,24 +888,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 		tuntap_flow.push_back( std::move(thr) );
 
-/*
-		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
-		_dbg1("buffer size is: " << asio::buffer_size( inbuf_asio ) );
-		_dbg1("async read, on mysocket="<<addrvoid(wire_socket));
-		{
-			// std::lock_guard< std::mutex > lg( mutex_handlerflow_socket ); // LOCK
-
-			auto & this_socket_and_strand = wire_socket.at(socket_nr);
-
-			// [asioflow]
-			this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
-					[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-						_dbg1("Handler (FIRST), size="<<bytes_transferred);
-						handler_receive(e_algo_receive::after_first_read, ec,bytes_transferred, this_socket_and_strand, inbuf_tab,inbuf_nr, mutex_handlerflow_socket_wire);
-					}
-			); // start async
-		}
-		*/
 	};
 	_mark("TUNTAP work started");
 
