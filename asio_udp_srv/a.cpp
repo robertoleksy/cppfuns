@@ -460,6 +460,17 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	bool cfg_port_multiport = false;
 	for (const string & arg : options) if (arg=="mport") cfg_port_multiport=true;
 
+	for (size_t ix=0; ix<mycmdline.m_arg.size(); ++ix) {
+		const string & arg = mycmdline.m_arg.at(ix);
+		auto pos=arg.find('=');
+		if ( (pos!=string::npos) && (mycmdline.m_used.at(ix)==false) ) {
+			_erro("Unused/unknown argument: " << arg << " (ix="<<ix<<")" );
+			throw std::runtime_error("Unused argument");
+		}
+	}
+
+	_goal("Parsing options done");
+
 	auto func_show_summary = [&]() {
 		std::ostringstream oss;
 		oss<<"Summary: " << endl
@@ -489,78 +500,77 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	};
 	func_show_summary();
 
+	_goal("Starting test. Crypto task: "<<cfg_test_crypto_task);
 
-	_goal("Starting test. cfg_test_crypto_task="<<cfg_test_crypto_task);
+	_note("Create ios (general)");
+	asio::io_service ios_general;
+	auto ios_general_work = make_unique< asio::io_service::work >(ios_general);
 
-	std::vector<std::unique_ptr<asio::io_service>> ios;
+	_note("Create ios (WIRE)");
+	std::vector<std::unique_ptr<asio::io_service>> ios_wire;
+	std::vector<std::unique_ptr<asio::io_service::work>> ios_wire_work;
 	for (int i=0; i<cfg_num_ios; ++i) {
-		_goal("Creating ios nr "<<i);
-		ios.emplace_back( std::make_unique<asio::io_service>() );
+		_goal("Creating ios (WIRE) nr "<<i);
+		ios_wire.emplace_back( std::make_unique<asio::io_service>() );
+		ios_wire_work.emplace_back( std::make_unique<asio::io_service::work>( * ios_wire.back() ) );
+		_goal("Creating ios (WIRE) nr "<<i<<" - done");
 	}
 
+	_note("Create ios (TUNTAP)");
 	std::vector<std::unique_ptr<asio::io_service>> ios_tuntap;
+	std::vector<std::unique_ptr<asio::io_service::work>> ios_tuntap_work;
 	for (int i=0; i<cfg_tuntap_ios; ++i) {
 		_goal("Creating ios (TUNTAP) nr "<<i);
 		ios_tuntap.emplace_back( std::make_unique<asio::io_service>() );
+		ios_tuntap_work.emplace_back( std::make_unique<asio::io_service::work>( * ios_tuntap.back() ) );
+		_goal("Creating ios (TUNTAP) nr "<<i<<" - done");
 	}
 
 
-	// have any long-term work to do (for ios)
-	boost::asio::signal_set signals( * ios.at(0), SIGINT);
+	boost::asio::signal_set signals( ios_general, SIGINT);
 	signals.async_wait( handler_signal_term );
+	std::thread ios_general_thread([&ios_general](){
+		ios_general.run();
+	});
 
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
-
-	vector<std::thread> thread_iosrun_tab; // threads for ios_run
-
-
-	for (size_t ix=0; ix<mycmdline.m_arg.size(); ++ix) {
-		const string & arg = mycmdline.m_arg.at(ix);
-		auto pos=arg.find('=');
-		if ( (pos!=string::npos) && (mycmdline.m_used.at(ix)==false) ) {
-			_erro("Unused/unknown argument: " << arg << " (ix="<<ix<<")" );
-			throw std::runtime_error("Unused argument");
-		}
-	}
-
-	_note("Starting ios worker - ios.run"); // ios.run()
+	vector<std::thread> ios_wire_thread;
 	for (int ios_nr = 0; ios_nr < cfg_num_ios; ++ios_nr) {
 		for (int ios_thread=0; ios_thread<cfg_num_thread_per_ios; ++ios_thread) {
-			_goal("start worker: ios_nr=" << ios_nr << " ios_thread=" << ios_thread);
+			_goal("WIRE: start worker: ios_nr=" << ios_nr << " ios_thread=" << ios_thread);
 			std::thread thread_run(
-				[&ios, ios_thread, ios_nr] {
-					_goal("ios (global/wire) worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
+				[&ios_wire, ios_thread, ios_nr] {
 					while (!g_atomic_exit) {
-						ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
-						_note("ios (global/wire) worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr <<") is done... will restat?");
-						std::this_thread::sleep_for( std::chrono::milliseconds(1000) );
+						ios_wire.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+						_note("WIRE: ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr <<") is done... will restat?");
+						std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 					}
-					_note("ios (global/wire) worker run (ios_thread="<<ios_thread<<" - COMPLETE");
+					_note("WIRE:ios (wire) worker run (ios_thread="<<ios_thread<<") - COMPLETE");
 				}
 			);
-			thread_iosrun_tab.push_back( std::move( thread_run ) );
+			ios_wire_thread.push_back( std::move( thread_run ) );
 		}
 	}
+	_note("WIRE: ios threads are running.");
 
-/*
-THIS CODE IS BAD (wrong ios array is used)
-
-	vector<std::thread> thread_iosrun_tab_tuntap; // threads for ios_run TUNTAP
-	_note("TUNTAP Starting ios worker - ios.run"); // ios.run()
+	vector<std::thread> ios_tuntap_thread;
 	for (int ios_nr = 0; ios_nr < cfg_tuntap_ios; ++ios_nr) {
 		for (int ios_thread=0; ios_thread<cfg_tuntap_ios_threads_per_one; ++ios_thread) {
-			_goal("TUNTAP start worker: " << ios_nr << " " << ios_thread);
+			_goal("TUNTAP: start worker: ios_nr=" << ios_nr << " ios_thread=" << ios_thread);
 			std::thread thread_run(
-				[&ios, ios_thread, ios_nr] {
-					_goal("TUNTAP ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr << ") - starting");
-					ios.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
-					_dbg4("TUNTAP ios worker run (ios_thread="<<ios_thread<<" - COMPLETE");
+				[&ios_tuntap, ios_thread, ios_nr] {
+					while (!g_atomic_exit) {
+						ios_tuntap.at( ios_nr )->run(); // <=== this blocks, for entire main loop, and runs (async) handlers here
+						_note("TUNTAP: ios worker run (ios_thread="<<ios_thread<<" on ios_nr=" << ios_nr <<") is done... will restat?");
+						std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+					}
+					_note("TUNTAP:ios (tuntap) worker run (ios_thread="<<ios_thread<<") - COMPLETE");
 				}
 			);
-			thread_iosrun_tab_tuntap.push_back( std::move( thread_run ) );
+			ios_tuntap_thread.push_back( std::move( thread_run ) );
 		}
 	}
-*/
+	_note("TUNTAP: ios threads are running.");
+
 
 	// --- tuntap classes / data ---
 	const int cfg_size_tuntap_maxread=9000;
@@ -611,7 +621,7 @@ THIS CODE IS BAD (wrong ios array is used)
 	// stop / show stats
 	_dbg1("The stop thread"); // exit flag --> ios.stop()
 	std::thread thread_stop(
-		[&ios, &welds, &welds_mutex] {
+		[&ios_general,&ios_wire,&ios_tuntap, &ios_general_work, &ios_wire_work, &ios_tuntap_work, &welds, &welds_mutex] {
 			for (int i=0; true; ++i) {
 				std::this_thread::sleep_for( std::chrono::seconds(2) );
 
@@ -638,32 +648,50 @@ THIS CODE IS BAD (wrong ios array is used)
 					break;
 				}
 			}
-			for (auto & one_ios : ios) {
+
+			/*
+			// do we need to stop work while we have ios stop?
+			_goal("Exit: so will stop work...");
+			// .reset resets the pointer, resulting in calling destructor on work, so work ends (and ios can exit)
+			// thread safe, no one else accesses this work objects - [TODO] except for the init code, sync with it?
+			for (auto & one_work : ios_wire_work) one_work.reset();
+			for (auto & one_work : ios_tuntap) one_work.reset();
+			{ auto & one_work = ios_general_work; one_work.reset(); }
+			*/
+
+			_goal("Exit: so will stop ios...");
+			// using ios->stop - is thread safe, asio::io_service is TS for most functions
+			for (auto & one_ios : ios_wire) {
+				one_ios->stop();
+			}
+			for (auto & one_ios : ios_tuntap) {
 				one_ios->stop(); // thread safe, asio::io_service is TS for most functions
+			}
+			{ auto & one_ios = ios_general;
+				one_ios.stop(); // thread safe, asio::io_service is TS for most functions
 			}
 		}
 	);
 
-
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) ); // ---
+	// std::this_thread::sleep_for( std::chrono::milliseconds(100) ); // ---
 
 	// sockets for (fake-)TUN connections:
 	vector<with_strand<ThreadObject<asio::ip::udp::socket>>> tuntap_socket;
 	for (int nr_sock=0; nr_sock<cfg_num_socket_tuntap; ++nr_sock) {
 		int port_nr = cfg_port_faketuntap;
 		_note("Creating TUNTAP socket #"<<nr_sock<<" on port " << port_nr);
-		auto func_select_ios = [&ios, cfg_tuntap_ios, &ios_tuntap, nr_sock]() -> asio::io_service & {
+		auto func_select_ios = [cfg_tuntap_ios, &ios_wire, &ios_tuntap, nr_sock]() -> asio::io_service & {
 			if (cfg_tuntap_ios==-2) {
 				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from global/wire ios (select from all of them)");
-				return * ios.at( nr_sock % ios.size() );
+				return * ios_wire.at( nr_sock % ios_wire.size() );
 			}
 			if (cfg_tuntap_ios==-1) {
 				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from global/wire ios (first one)");
-				return * ios.at(0);
+				return * ios_wire.at(0);
 			}
 			if (cfg_tuntap_ios>0) {
 				_note("TUNTAP - selecting for socket="<<nr_sock<<" an IOS from TUNTAP own ios");
-				return * ios_tuntap.at( nr_sock % cfg_tuntap_ios);
+				return * ios_tuntap.at( nr_sock % ios_tuntap.size());
 			}
 			throw std::runtime_error("My error in selecting ios for tuntap");
 		};
@@ -686,7 +714,7 @@ THIS CODE IS BAD (wrong ios array is used)
 		if (cfg_port_multiport) port_nr += nr_sock;
 		_note("Creating wire (P2P) socket #"<<nr_sock<<" on port " << port_nr);
 		//wire_socket.push_back({ios,ios}); // active udp // <--- TODO why not?
-		auto & one_ios = ios.at( nr_sock % ios.size() );
+		auto & one_ios = ios_wire.at( nr_sock % ios_wire.size() );
 
 		auto & socket_array = wire_socket;
 		socket_array.push_back( with_strand<ThreadObject<boost::asio::ip::udp::socket>>(*one_ios, *one_ios) );
@@ -711,7 +739,7 @@ THIS CODE IS BAD (wrong ios array is used)
 
 	for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
 
-	vector<std::thread> thread_tuntap_tab;
+	vector<std::thread> tuntap_flow;
 
 	// tuntap: DO WORK
 	for (size_t tuntap_socket_nr=0; tuntap_socket_nr<cfg_num_socket_tuntap; ++tuntap_socket_nr) {
@@ -839,38 +867,6 @@ THIS CODE IS BAD (wrong ios array is used)
 								*/
 
 
-
-								{ // test DUPA
-								auto & mysocket = wire_socket.at(wire_socket_nr);
-								mysocket.get_strand().post(
-									//mysocket.wrap(
-										[wire_socket_nr, &wire_socket, &welds, &welds_mutex, found_ix, peer_peg]() {
-											_note("TUNTAP-DUPA handler1 (in strand).");
-
-											auto & wire = wire_socket.at(wire_socket_nr);
-
-/*
-											auto send_buf_asio = asio::buffer( welds.at(found_ix).addr_all() , welds.at(found_ix).m_pos );
-											wire.get_unsafe_assume_in_strand().get().async_send_to(
-												send_buf_asio,
-												peer_peg,
-												[wire_socket_nr, &welds, &welds_mutex, found_ix](const boost::system::error_code & ec, std::size_t bytes_transferred) {
-													_note("TUNTAP-DUPA handler2 (sent done).");
-													_note("TUNTAP-DUPA handler2 (sent done)... will clear");
-													_note("TUNTAP-DUPA handler2 (sent done)... ok clear - ALL DONE OK ++++++++++++++++++++++++++++++++");
-												}
-											); // asio send
-											*/
-
-											_note("TUNTAP-DUPA handler1 (in strand) - ok STARTED the handler2. Socket "<<wire_socket_nr<<" weld " <<found_ix << " - ASYNC STARTED");
-										} // delayed TUNTAP->WIRE
-									// ) // wrap
-								); // start(post) handler: TUNTAP->WIRE start
-
-								_note("TUNTAP-DUPA posted: weld=" << found_ix << " to P2P socket="<<wire_socket_nr);
-								} // test DUPA
-
-
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
 									// mysocket.wrap(
@@ -941,7 +937,7 @@ THIS CODE IS BAD (wrong ios array is used)
 			} // the lambda
 		);
 
-		thread_tuntap_tab.push_back( std::move(thr) );
+		tuntap_flow.push_back( std::move(thr) );
 
 /*
 		auto inbuf_asio = asio::buffer( inbuf_tab.addr(inbuf_nr) , t_inbuf::size() );
@@ -1006,13 +1002,13 @@ THIS CODE IS BAD (wrong ios array is used)
 		}
 	}
 
-	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
+	// std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	_goal("All started");
 	func_show_summary();
 
 	_goal("Waiting for all threads to end");
-	_goal("Join stop threads");
+	_goal("Join stop thread");
 	thread_stop.join();
 
 	_goal("Stopping tuntap threads - unblocking them with some self-sent data");
@@ -1033,23 +1029,18 @@ THIS CODE IS BAD (wrong ios array is used)
 
 		std::this_thread::sleep_for( std::chrono::milliseconds(10) );
 	}
-	_goal("Join tuntap threads");
-	for (auto & thr : thread_tuntap_tab) {
-		thr.join();
-	}
+	_goal("Join tuntap flow threads");
+	for (auto & thr : tuntap_flow) { thr.join(); }
 
-	_goal("Join iosrun threads");
-	for (auto & thr : thread_iosrun_tab) {
-		thr.join();
-	}
-	_goal("Join iosrun threads (TUNTAP)");
-	/*
-	for (auto & thr : thread_iosrun_tab_tuntap) {
-		thr.join();
-	}*/
+	_goal("Join wire ios threads");
+	for (auto & thr : ios_wire_thread ) { thr.join(); }
+	_goal("Join tuntap ios threads");
+	for (auto & thr : ios_tuntap_thread ) { thr.join(); }
+	_goal("Join general ios threads");
+	{ auto & thr = ios_general_thread; thr.join(); }
+
 
 	_goal("All threads done");
-
 }
 
 
