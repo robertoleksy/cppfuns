@@ -797,7 +797,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							if (should_send) { // almost full
 								// select wire
 								int wire_socket_nr = ((my_random*4823)%4913) % wire_socket.size(); // TODO better pseudo-random
-								wire_socket_nr = 0; // TODO
 								++my_random;
 								_dbg4("TUNTAP sending out the data from tuntap socket="<<tuntap_socket_nr
 									<<" via wire_socket_nr="<<wire_socket_nr);
