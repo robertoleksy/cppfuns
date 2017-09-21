@@ -3,7 +3,6 @@
 This program - as all codes in this project - is totally experimental, likelly has many bugs and exploits!
 Do not use it.
 
-
 Possible ASIO bug (or we did something wrong): see https://svn.boost.org/trac10/ticket/13193
 
 -----------
@@ -12,35 +11,26 @@ TODO - ERROR:
 When you send to 2345 UDP localhost (the fake-tuntap) lots of data it will eventually lock up, because
 the .post'ed handlers re NOT executing for some reson, it looks like this:
 
-
 659: ------ TEST-posted
 670: ###### TUNTAP (weld 1) decided to: SEND-NOW space left 8000 vs needed space 9000
 682: ------ TUNTAP sending out the data from tuntap socket=0 via wire_socket_nr=0
 740: TUNTAP-DUPA posted: weld=1 to P2P socket=0
 775: TUNTAP-WIRE posted: weld=1 to P2P socket=0
 602: TUNTAP reading
-624: 
+624:
 
   ....  and look here - the handlers of this 3 posted works are NOT executed this time ....
 
 @@@@@@ ERRROR: No free tuntap buffers!
 
-
 -----------
 
-
-
-
 */
-
-
-
 
 #include <iostream>
 #include <thread>
 #include <vector>
 #include <system_error>
-
 
 #include <boost/asio.hpp>
 #include <iostream>
@@ -48,7 +38,7 @@ the .post'ed handlers re NOT executing for some reson, it looks like this:
 #include <atomic>
 #include <mutex>
 
-bool g_debug = true;
+bool g_debug = false;
 
 #define print_debug(X) { ::std::ostringstream _dbg_oss; _dbg_oss<<__LINE__<<": "<<X<<::std::endl;  ::std::cerr<<_dbg_oss.str(); }
 
@@ -119,7 +109,6 @@ class with_strand {
 		asio::io_service::strand m_strand;
 };
 
-
 std::atomic<bool> g_atomic_exit;
 std::atomic<int> g_running_tuntap_jobs;
 std::atomic<long int> g_recv_totall_count;
@@ -184,8 +173,6 @@ enum class e_algo_receive {
 	after_first_read, after_next_read, // handler when we got the date -, need to read it and use it, decrypt it
 	after_processing_done, // handler when we are now ordered to restart the read
 };
-
-
 
 int cfg_test_crypto_task=0; // global option
 
@@ -318,7 +305,6 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 	} // restart_read
 	else throw std::runtime_error("Unknown state of algo.");
 }
-
 
 int safe_atoi(const std::string & s) {
 	return atoi(s.c_str());
@@ -456,7 +442,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		throw std::runtime_error("Must set mt method");
 	}
 
-
 	bool cfg_port_multiport = false;
 	for (const string & arg : options) if (arg=="mport") cfg_port_multiport=true;
 
@@ -526,7 +511,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		_goal("Creating ios (TUNTAP) nr "<<i<<" - done");
 	}
 
-
 	boost::asio::signal_set signals( ios_general, SIGINT);
 	signals.async_wait( handler_signal_term );
 	std::thread ios_general_thread([&ios_general](){
@@ -570,7 +554,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 		}
 	}
 	_note("TUNTAP: ios threads are running.");
-
 
 	// --- tuntap classes / data ---
 	const int cfg_size_tuntap_maxread=9000;
@@ -731,11 +714,9 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	std::mutex mutex_handlerflow_socket_wire;
 
-
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	// ---> tuntap: blocking version seems faster <---
-
 
 	for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
 
@@ -744,7 +725,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	// tuntap: DO WORK
 	for (size_t tuntap_socket_nr=0; tuntap_socket_nr<cfg_num_socket_tuntap; ++tuntap_socket_nr) {
 		_mark("Creating workflow (blocking - thread) for tuntap, socket="<<tuntap_socket_nr);
-
 
 		std::thread thr = std::thread(
 			[tuntap_socket_nr, &tuntap_socket, &welds, &welds_mutex, &wire_socket, &peer_pegs, cfg_tuntap_buf_sleep]()
@@ -844,7 +824,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 								// select peg
 								asio::ip::udp::endpoint peer_peg = peer_pegs.at(0);
 
-
 								/*
 								// [asioflow]
 								_erro("WARNING this is probably UB (thread race)"); // XXX FIXME [thread]
@@ -865,7 +844,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 									}
 								);
 								*/
-
 
 								auto & mysocket = wire_socket.at(wire_socket_nr);
 								mysocket.get_strand().post(
@@ -960,7 +938,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	};
 	_mark("TUNTAP work started");
 
-
 	std::this_thread::sleep_for( std::chrono::milliseconds(100) );
 
 	// wire P2P: add first work - handler-flow
@@ -1039,11 +1016,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	_goal("Join general ios threads");
 	{ auto & thr = ios_general_thread; thr.join(); }
 
-
 	_goal("All threads done");
 }
-
-
 
 int main(int argc, const char **argv) {
 	std::vector< std::string> options;
@@ -1054,8 +1028,6 @@ int main(int argc, const char **argv) {
 	_goal("Normal exit");
 	return 0;
 }
-
-
 
 // ========================================================
 // unused - example
@@ -1110,4 +1082,3 @@ void old_tests() {
 	}
 
 }
-
