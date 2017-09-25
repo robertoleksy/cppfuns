@@ -729,7 +729,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	// ---> tuntap: blocking version seems faster <---
 
-	for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
+	{
+		std::lock_guard<std::mutex> lg(welds_mutex);
+		for (size_t i=0; i<cfg_num_weld_tuntap; ++i) welds.push_back( c_weld() );
+	}
 
 	vector<std::thread> tuntap_flow;
 
