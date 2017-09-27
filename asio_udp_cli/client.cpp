@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
 {
 	if (argc < 3) {
 		std::cout << "Usage: ./client <host> <port> <max_speed(kpck/s)>" << std::endl;
-		std::cout << "or ./client <host> <port> <msg> <msgbytes> <count> " << std::endl;
+		std::cout << "or ./client <host> <port> <max_speed(kpck/s)> <msg> <msgbytes> <count> " << std::endl;
 		return 1;
 	}
 	const char *host = argv[1];
