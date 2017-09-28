@@ -1,4 +1,4 @@
-/**
+/*
 
 This program - as all codes in this project - is totally experimental, likelly has many bugs and exploits!
 Do not use it.
@@ -126,13 +126,6 @@ class with_strand {
 		asio::io_service::strand m_strand;
 };
 
-std::atomic<bool> g_atomic_exit;
-std::atomic<int> g_running_tuntap_jobs;
-
-std::atomic<long int> g_state_tuntap2wire_started;
-std::atomic<long int> g_state_tuntap2wire_in_handler1;
-std::atomic<long int> g_state_tuntap2wire_in_handler2;
-
 int g_stage_sleep_time=500; ///< sleep between stages of startup, was used to debug some race conditions
 
 /// simple timer
@@ -192,12 +185,12 @@ void c_timerfoo::print_info(std::ostream & ostr) const {
 
 	const double MB = 1*1000*100;
 
-	int detail=0;
-	if (detail>0) { ostr << std::setw(9) << current_size  << " B "; }
-	ostr << std::setw(4) << (current_size_speed/MB)  << " MB/s)" ;
+	int detail=1;
+	if (detail>=2) { ostr << std::setw(9) << current_size  << " B "; }
+	ostr << std::setw(4) << (current_size_speed/MB)  << " MB/s" ;
 	ostr << " ";
-	if (detail>0) { ostr << std::setw(6) << current_count << " p "; }
-	ostr << std::setw(4) << (current_count_speed/MB) << " Mp/s)" ;
+	if (detail>=1) { ostr << std::setw(6) << current_count << " p "; }
+	ostr << std::setw(4) << (current_count_speed/MB) << " Mp/s" ;
 }
 
 std::ostream & operator<<(std::ostream & ostr, c_timerfoo & timer) {
@@ -205,7 +198,17 @@ std::ostream & operator<<(std::ostream & ostr, c_timerfoo & timer) {
 	return ostr;
 }
 
+// ============================================================================
+
 c_timerfoo g_speed_wire_recv;
+
+std::atomic<bool> g_atomic_exit;
+std::atomic<int> g_running_tuntap_jobs;
+
+std::atomic<long int> g_state_tuntap2wire_started;
+std::atomic<long int> g_state_tuntap_fullbuf;
+c_timerfoo g_state_tuntap2wire_in_handler1;
+c_timerfoo g_state_tuntap2wire_in_handler2;
 
 // ============================================================================
 // Wire
@@ -446,8 +449,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	g_running_tuntap_jobs=0;
 
 	g_state_tuntap2wire_started=0;
-	g_state_tuntap2wire_in_handler1=0;
-	g_state_tuntap2wire_in_handler2=0;
+	g_state_tuntap_fullbuf=0;
 
 	auto func_show_usage = []() {
 		std::cout << "\nUsage: \n"
@@ -690,16 +692,20 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	std::thread thread_stop(
 		[&ios_general,&ios_wire,&ios_tuntap, &ios_general_work, &ios_wire_work, &ios_tuntap_work, &welds, &welds_mutex] {
 			for (int i=0; true; ++i) {
-				std::this_thread::sleep_for( std::chrono::seconds(2) );
+				std::this_thread::sleep_for( std::chrono::milliseconds(500) );
 
 				// [counter] read
 				std::ostringstream oss;
-				oss << "Loop, i="<<i<<" ";
-				oss << "Wire RECV={" << g_speed_wire_recv << "}";
-				oss << "Event: ";
-				oss << "tuntap2wire(start="<<g_state_tuntap2wire_started<<" h1="<<g_state_tuntap2wire_in_handler1
-					<<" h2="<<g_state_tuntap2wire_in_handler2<<")";
-				oss << " Welds: ";
+				oss << "Loop. ";
+				oss << "Wire: RECV={" << g_speed_wire_recv << "}";
+				oss << "; ";
+				oss << "Tuntap: ";
+				oss << "start="<<g_state_tuntap2wire_started<<' ';
+				oss << "h1={"<<g_state_tuntap2wire_in_handler1<<"} ";
+				oss <<" h2={"<<g_state_tuntap2wire_in_handler2<<"} ";
+				oss <<" fullBuf="<<g_state_tuntap_fullbuf<<" ";
+				oss << "; ";
+				oss << "Welds: ";
 				{
 					std::lock_guard<std::mutex> lg(welds_mutex);
 					for (const auto & weld : welds) {
@@ -818,7 +824,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			[tuntap_socket_nr, &tuntap_socket, &welds, &welds_mutex, &wire_socket, &peer_pegs, cfg_tuntap_buf_sleep]()
 			{
 				++g_running_tuntap_jobs;
-
 				int my_random = (tuntap_socket_nr*437213)%38132 + std::rand();
 
 				auto func_send_weld = [&my_random, &wire_socket, &peer_pegs, &welds, &welds_mutex](int send_weld_nr) { // lambda
@@ -835,23 +840,27 @@ void asiotest_udpserv(std::vector<std::string> options) {
 					mysocket.get_strand().post(
 						// mysocket.wrap(
 							[wire_socket_nr, &wire_socket, &welds, &welds_mutex, send_weld_nr, peer_peg]() {
+								auto & weld = welds.at(send_weld_nr);
+								size_t send_size = weld.m_pos;
+
 								_dbg4("TUNTAP-WIRE handler1 (in strand). TUNTAP->WIRE will be now sent."
 									<< " weld="<<found_ix<<" wire-socket="<<wire_socket_nr);
-								++g_state_tuntap2wire_in_handler1;
+								g_state_tuntap2wire_in_handler1.add(1, send_size); // [counter]
 
 								auto & wire = wire_socket.at(wire_socket_nr);
-								auto send_buf_asio = asio::buffer( welds.at(wire_socket_nr).addr_all() , welds.at(wire_socket_nr).m_pos );
+								auto send_buf_asio = asio::buffer( weld.addr_all() , send_size );
+
 								wire.get_unsafe_assume_in_strand().get().async_send_to(
 									send_buf_asio,
 									peer_peg,
-									[wire_socket_nr, &welds, &welds_mutex](const boost::system::error_code & ec, std::size_t bytes_transferred)
+									[send_weld_nr, wire_socket_nr, &welds, &welds_mutex](const boost::system::error_code & ec, std::size_t bytes_transferred)
 									{
 										_dbg4("TUNTAP-WIRE handler2 (sent done). ec="<<ec.message()<<"."
-											<< " weld="<<wire_socket_nr<<" wire-socket="<<wire_socket_nr
+											<< " weld="<<send_weld_nr<<" wire-socket="<<wire_socket_nr
 										);
-										++g_state_tuntap2wire_in_handler2;
+										g_state_tuntap2wire_in_handler2.add(1, bytes_transferred);
 										std::lock_guard<std::mutex> lg(welds_mutex); // lock
-										auto & weld = welds.at(wire_socket_nr);
+										auto & weld = welds.at(send_weld_nr);
 										weld.clear();
 									}
 								); // asio send
@@ -889,7 +898,8 @@ void asiotest_udpserv(std::vector<std::string> options) {
 							weld.m_reserved=true; // we are using it now
 						}
 						else {
-							_erro("No free tuntap buffers! - fullbuffer!");
+							_dbg4("No free tuntap buffers! - fullbuffer!");
+							++g_state_tuntap_fullbuf;
 							func_send_weld(0); // TODO choose weld
 							// forced send
 							continue ; // <---
