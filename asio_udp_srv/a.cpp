@@ -179,7 +179,7 @@ void c_timerfoo::print_info(std::ostream & ostr) const {
 	t_my_size current_size = this->m_size.load();
 	t_my_count current_count = this->m_count.load();
 
-	double ellapsed_sec = ( std::chrono::duration_cast<std::chrono::seconds>(time_now - time_started) ).count();
+	double ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - time_started) ).count() / 1000.;
 	double current_size_speed  = current_size  / ellapsed_sec; // in B/s
 	double current_count_speed = current_count / ellapsed_sec; // in B/s
 
