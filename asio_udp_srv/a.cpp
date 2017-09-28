@@ -126,7 +126,7 @@ class with_strand {
 		asio::io_service::strand m_strand;
 };
 
-int g_stage_sleep_time=500; ///< sleep between stages of startup, was used to debug some race conditions
+int g_stage_sleep_time = 0; ///< sleep between stages of startup, was used to debug some race conditions
 
 /// simple timer
 struct t_mytime {
