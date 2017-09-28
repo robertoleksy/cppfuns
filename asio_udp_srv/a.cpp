@@ -185,7 +185,7 @@ void c_timerfoo::print_info(std::ostream & ostr) const {
 
 	const double MB = 1*1000*1000;
 
-	int detail=1;
+	int detail=0;
 	if (detail>=2) { ostr << std::setw(9) << current_size  << " B "; }
 	ostr << std::setw(4) << (current_size_speed/MB)  << " MB/s" ;
 	ostr << " ";
@@ -1058,56 +1058,3 @@ int main(int argc, const char **argv) {
 	return 0;
 }
 
-// ========================================================
-// unused - example
-void old_tests() {
-  int port_num = 3456;
-
-	asio::io_service ios;
-  asio::ip::tcp protocol_tcp = asio::ip::tcp::v4();
-  asio::ip::udp protocol_udp = asio::ip::udp::v4();
-
-	if (1) { // UDP server/client - anyway active socket
-		char inbuf_data[64];
-		auto inbuf_asio = asio::buffer( inbuf_data , std::extent<decltype(inbuf_data)>::value );
-		asio::ip::udp::socket mysocket(ios); // active udp
-		_note("bind");
-		mysocket.open( protocol_udp );
-		mysocket.bind( asio::ip::udp::endpoint( asio::ip::address_v4::any() , 9000 ) );
-		asio::ip::udp::endpoint remote_ep;
-		_note("receive");
-		size_t read_size = mysocket.receive_from( inbuf_asio , remote_ep ); // ***
-		_note("got data from remote " << remote_ep);
-		_note("read: ["<<std::string(&inbuf_data[0],read_size)<<"]");
-	}
-
-	if (0) { // TCP server - part
-		asio::ip::address ip_address = asio::ip::address_v4::any();
-		asio::ip::tcp::endpoint ep(ip_address, port_num);
-
-		asio::ip::tcp::socket mysocket(ios);
-
-		asio::ip::tcp::acceptor myacceptor(ios);
-
-		mysocket.open(protocol_tcp);
-		myacceptor.open(protocol_tcp);
-	}
-
-	if (0) { // TCP client
-		asio::ip::tcp::endpoint ep_dst_tcp( asio::ip::address::from_string("127.0.0.1") , 80 );
-		asio::ip::tcp::socket tcpsend( ios );
-		_note("open");
-		tcpsend.open(protocol_tcp);
-		_note("connect");
-		tcpsend.connect( ep_dst_tcp ); // waits for ACK here
-		asio::write( tcpsend , asio::buffer( std::string("GET /index.html HTTP/1.1\r\n\r\n") ) );
-
-		char inbuf_data[64];
-		auto inbuf = asio::buffer( inbuf_data , std::extent<decltype(inbuf_data)>::value );
-		_note("read");
-		auto read_size = size_t{ asio::read( tcpsend , inbuf ) };
-		_note("read size " << read_size);
-		_note("read: ["<<std::string(&inbuf_data[0],read_size)<<"]");
-	}
-
-}
