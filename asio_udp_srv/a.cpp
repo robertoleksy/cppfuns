@@ -38,6 +38,14 @@ the .post'ed handlers re NOT executing for some reson, it looks like this:
 #include <atomic>
 #include <mutex>
 
+#define ANTINET_DEBUG_MODE 1 ///< if 1, then e.g. debug here is enabled, and some asserts/checks are executed
+
+#if ANTINET_IF_DEBUG
+#define ANTINET_IF_DEBUG(X) (X);
+#else
+#define ANTINET_IF_DEBUG(X) ;
+#endif
+
 bool g_debug = false;
 
 #define print_debug(X) { ::std::ostringstream _dbg_oss; _dbg_oss<<__LINE__<<": "<<X<<::std::endl;  ::std::cerr<<_dbg_oss.str(); }
@@ -67,23 +75,31 @@ using std::make_unique;
 using std::string;
 using std::endl;
 
+/// Class to access object in a way that exposes race conditions
 template <typename T>
 class ThreadObject {
 	public:
-		template<typename... Args> ThreadObject(Args&&... args) : m_obj(std::forward<Args>(args)...) {}
+		template<typename... Args> ThreadObject(Args&&... args) : m_obj(std::forward<Args>(args)...) {
+			ANTINET_IF_DEBUG( m_test_data=0; );
+		}
 
-		T & get() { m_test_data = (m_test_data+1) % 255; return m_obj; }
-		const T & get() const { m_test_data = (m_test_data+1) % 255; return m_obj; }
+		T & get() noexcept {
+			ANTINET_IF_DEBUG( { m_test_data = (m_test_data+1) % 255; } )
+			return m_obj;
+		}
+		const T & get() const noexcept {
+			ANTINET_IF_DEBUG( { m_test_data = (m_test_data+1) % 255; } )
+			return m_obj;
+		}
 
-		int get_test_data() { return m_test_data; }
+		int get_test_data() noexcept { return m_test_data; }
 
 	private:
 		T m_obj;
 		volatile int m_test_data; ///< write to this to cause (expose) a race condition
-
-		void init_this_object() { m_test_data=0; }
 };
 
+/// Class that has some object (e.g. a socket) and a strand that protects that object
 template <typename T>
 class with_strand {
 	public:
@@ -118,8 +134,9 @@ std::atomic<long int> g_state_tuntap2wire_started;
 std::atomic<long int> g_state_tuntap2wire_in_handler1;
 std::atomic<long int> g_state_tuntap2wire_in_handler2;
 
-int g_stage_sleep_time=500;
+int g_stage_sleep_time=500; ///< sleep between stages of startup, was used to debug some race conditions
 
+/// simple timer
 struct t_mytime {
 	using t_timevalue = std::chrono::time_point<std::chrono::steady_clock>;
 	t_timevalue m_time;
@@ -129,6 +146,7 @@ struct t_mytime {
 
 std::atomic<t_mytime> g_recv_started;
 
+/// input buffer, e.g. for reading from wire
 struct t_inbuf {
 	char m_data[1024];
 	static size_t size();
@@ -170,6 +188,10 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 	_goal("Signal! (control-C?) " << signal_number);
 	g_atomic_exit = true;
 }
+
+// ==================================================================
+// wire receiving
+// ==================================================================
 
 enum class e_algo_receive {
 	after_first_read, after_next_read, // handler when we got the date -, need to read it and use it, decrypt it
