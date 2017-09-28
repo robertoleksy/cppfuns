@@ -28,6 +28,7 @@ the .post'ed handlers re NOT executing for some reson, it looks like this:
 */
 
 #include <iostream>
+#include <iomanip>
 #include <thread>
 #include <vector>
 #include <system_error>
@@ -127,8 +128,6 @@ class with_strand {
 
 std::atomic<bool> g_atomic_exit;
 std::atomic<int> g_running_tuntap_jobs;
-std::atomic<long int> g_recv_totall_count;
-std::atomic<long int> g_recv_totall_size;
 
 std::atomic<long int> g_state_tuntap2wire_started;
 std::atomic<long int> g_state_tuntap2wire_in_handler1;
@@ -144,7 +143,73 @@ struct t_mytime {
 	t_mytime(std::chrono::time_point<std::chrono::steady_clock> time_) noexcept { m_time = time_; }
 };
 
-std::atomic<t_mytime> g_recv_started;
+class c_timerfoo {
+	public:
+		using t_my_count = long int;
+		using t_my_size = long int;
+
+		c_timerfoo();
+		void add(t_my_count count, t_my_size size_totall) noexcept; ///< e.g. (3,1024) means we got 3 packets, that in sum have size 1024 B
+		std::string get_info() const ;
+		void print_info(std::ostream & ostr) const ;
+
+	private:
+		std::atomic<t_mytime> m_time_started;
+		std::atomic<t_my_count> m_count;
+		std::atomic<t_my_size> m_size;
+};
+
+c_timerfoo::c_timerfoo() : m_time_started(t_mytime{}), m_count(0), m_size(0) {
+};
+
+void c_timerfoo::add(t_my_count count, t_my_size size_totall) noexcept {
+	// [counter]
+	this->m_count += count;
+	this->m_size += size_totall;
+	t_mytime time_now( std::chrono::steady_clock::now() );
+	t_mytime time_zero;
+	this->m_time_started.compare_exchange_strong(
+		time_zero,
+		time_now
+	);
+}
+
+std::string c_timerfoo::get_info() const {
+	std::ostringstream oss;
+	print_info(oss);
+	return oss.str();
+}
+
+void c_timerfoo::print_info(std::ostream & ostr) const {
+	auto time_now = std::chrono::steady_clock::now();
+	auto time_started = this->m_time_started.load().m_time;
+	t_my_size current_size = this->m_size.load();
+	t_my_count current_count = this->m_count.load();
+
+	double ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - time_started) ).count() / 1000.;
+	double current_size_speed  = current_size  / ellapsed_sec; // in B/s
+	double current_count_speed = current_count / ellapsed_sec; // in B/s
+
+	const double MB = 1*1000*100;
+
+	int detail=0;
+	if (detail>0) { ostr << std::setw(9) << current_size  << " B "; }
+	ostr << std::setw(4) << (current_size_speed/MB)  << " MB/s)" ;
+	ostr << " ";
+	if (detail>0) { ostr << std::setw(6) << current_count << " p "; }
+	ostr << std::setw(4) << (current_count_speed/MB) << " Mp/s)" ;
+}
+
+std::ostream & operator<<(std::ostream & ostr, c_timerfoo & timer) {
+	timer.print_info(ostr);
+	return ostr;
+}
+
+c_timerfoo g_speed_wire_recv;
+
+// ============================================================================
+// Wire
+// ============================================================================
 
 /// input buffer, e.g. for reading from wire
 struct t_inbuf {
@@ -225,17 +290,10 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 	);
 
 	if ((algo_step==e_algo_receive::after_first_read) || (algo_step==e_algo_receive::after_next_read)) {
-		++ g_recv_totall_count;
-		g_recv_totall_size += bytes_transferred;
+		g_speed_wire_recv.add(1, bytes_transferred); // [counter] inc
+
 		static const char * marker = "exit";
 		static const size_t marker_len = strlen(marker);
-
-		t_mytime time_now( std::chrono::steady_clock::now() );
-		t_mytime time_zero;
-		g_recv_started.compare_exchange_strong(
-			time_zero,
-			time_now
-		);
 
 		if (std::strncmp( &inbuf.m_data[0] , marker , std::min(bytes_transferred,marker_len) )==0) {
 			if (bytes_transferred == marker_len) {
@@ -386,10 +444,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	g_atomic_exit=false;
 	g_running_tuntap_jobs=0;
-
-	g_recv_totall_count=0;
-	g_recv_totall_size=0;
-	g_recv_started = t_mytime{};
 
 	g_state_tuntap2wire_started=0;
 	g_state_tuntap2wire_in_handler1=0;
@@ -638,13 +692,10 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			for (int i=0; true; ++i) {
 				std::this_thread::sleep_for( std::chrono::seconds(2) );
 
-				auto time_now = std::chrono::steady_clock::now();
-				auto now_recv_totall_size = g_recv_totall_size.load();
-				double now_recv_ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - g_recv_started.load().m_time) ).count() / 1000.;
-				double now_recv_speed = now_recv_totall_size / now_recv_ellapsed_sec; // B/s
+				// [counter] read
 				std::ostringstream oss;
-				oss << "Loop, i="<<i<<" recv count=" << g_recv_totall_count << ", size=" << now_recv_totall_size
-					<< " speed="<< (now_recv_speed/1000000) <<" MB/s ";
+				oss << "Loop, i="<<i<<" ";
+				oss << "Wire RECV={" << g_speed_wire_recv << "}";
 				oss << "Event: ";
 				oss << "tuntap2wire(start="<<g_state_tuntap2wire_started<<" h1="<<g_state_tuntap2wire_in_handler1
 					<<" h2="<<g_state_tuntap2wire_in_handler2<<")";
@@ -652,7 +703,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 				{
 					std::lock_guard<std::mutex> lg(welds_mutex);
 					for (const auto & weld : welds) {
-						oss << "[" << weld.space_left() << " left; " << (weld.m_reserved ? "RESERVED" : "not-resv") << "]";
+						oss << "[" << weld.space_left() << " " << (weld.m_reserved ? "RESE" : "idle") << "]";
 					}
 				}
 				_goal(oss.str());
