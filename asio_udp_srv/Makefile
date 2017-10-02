@@ -4,7 +4,7 @@
 all: a.out
 
 run: a.out
-	./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=-1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand mport
+	./a.out 192.168.1.107 2345 crypto=-1 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=-1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand mport
 
 run_args: a.out
 	./a.out $(ARGS)

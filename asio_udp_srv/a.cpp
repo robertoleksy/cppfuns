@@ -322,8 +322,19 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 
 		// fake "decrypt/encrypt" operation
 		if (cfg_test_crypto_task > 0) {
-
-			inr ret = crypto_stream_xor(
+			unsigned char bbb=0;
+			for (unsigned int j=0; j<cfg_test_crypto_task; ++j) {
+				unsigned char aaa = j%5;
+				for (size_t pos=0; pos<bytes_transferred; ++pos) {
+					aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
+				}
+				bbb ^= aaa;
+			}
+			auto volatile rrr = bbb;
+			if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
+		}
+		else if (cfg_test_crypto_task < 0) {
+			int ret = crypto_stream_xor(
 				reinterpret_cast<unsigned char *>(&(inbuf.m_data[0])), // out
 				reinterpret_cast<unsigned char *>(&(inbuf.m_data[0])), // in
 				std::extent<decltype(inbuf.m_data)>::value, // in len
@@ -466,11 +477,12 @@ void asiotest_udpserv(std::vector<std::string> options) {
 
 	auto func_show_usage = []() {
 		std::cout << "\nUsage: \n"
-		<< "./a.out 192.168.1.107 2345 crypto=10 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand \n"
+		<< "./a.out 192.168.1.107 2345 crypto=0 wire_buf=4 wire_sock=2 wire_ios=2 wire_ios_thr=2 tuntap_weld=2 tuntap_sock=1 tuntap_ios=1 tuntap_ios_thr=2 tuntap_weld_sleep=1 tuntap_block mt_strand \n"
 		<< "Also can ADD this options:\n"
 		<< "  mt_strand/mt_mutex\n"
 		<< "  tuntap_block/tuntap_async\n"
 		<< "  mport debug\n"
+		<< "Crypto: -1 is some crypto test; n (n>0) is reading all bytes; n==0 is nothing \n"
 		<< "See code for more details, search func_cmdline.\n"
 		<< std::endl;
 	};
