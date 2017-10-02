@@ -24,10 +24,10 @@ helgrind: g.out
 	valgrind --tool=helgrind ./g.out
 
 a.out: a.cpp
-	clang++ -g3 -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -pthread
+	clang++ -g3 -O3 --std=c++14 -Wall a.cpp -o a.out -lboost_system -lsodium -pthread
 
 g.out: a.cpp
-	clang++ --std=c++14 -Wall -g3 a.cpp -o g.out -lboost_system -pthread
+	clang++ --std=c++14 -Wall -g3 a.cpp -o g.out -lboost_system -lsodium -pthread
 
 tsan.out: a.cpp
-	clang++ a.cpp --std=c++14 -fsanitize=thread -g3 -Wall -o tsan.out -lboost_system -pthread
+	clang++ a.cpp --std=c++14 -fsanitize=thread -g3 -Wall -o tsan.out -lboost_system -lsodium -pthread

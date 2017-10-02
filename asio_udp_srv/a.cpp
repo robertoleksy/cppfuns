@@ -256,6 +256,21 @@ void handler_signal_term(const boost::system::error_code& error , int signal_num
 	_goal("Signal! (control-C?) " << signal_number);
 	g_atomic_exit = true;
 }
+// ==================================================================
+// crypto
+// ==================================================================
+#include <sodium.h>
+namespace crypto {
+	std::array<unsigned char, crypto_stream_NONCEBYTES> nonce;
+	std::array<unsigned char, crypto_stream_KEYBYTES> secret_key;
+	void init() {
+		if (sodium_init() == -1) {
+			throw std::runtime_error("sodium init error");
+		}
+		randombytes_buf(nonce.data(), nonce.size());
+		randombytes_buf(secret_key.data(), secret_key.size());
+	}
+}
 
 // ==================================================================
 // wire receiving
@@ -307,16 +322,14 @@ void handler_receive(const e_algo_receive algo_step, const boost::system::error_
 
 		// fake "decrypt/encrypt" operation
 		if (cfg_test_crypto_task > 0) {
-			unsigned char bbb=0;
-			for (unsigned int j=0; j<cfg_test_crypto_task; ++j) {
-				unsigned char aaa = j%5;
-					for (size_t pos=0; pos<bytes_transferred; ++pos) {
-					aaa ^= inbuf.m_data[pos] & inbuf.m_data[ (pos*(j+2))%bytes_transferred ] & j;
-				}
-				bbb ^= aaa;
-			}
-			auto volatile rrr = bbb;
-			if (rrr==0) _note("rrr="<<static_cast<int>(rrr));
+
+			inr ret = crypto_stream_xor(
+				reinterpret_cast<unsigned char *>(&(inbuf.m_data[0])), // out
+				reinterpret_cast<unsigned char *>(&(inbuf.m_data[0])), // in
+				std::extent<decltype(inbuf.m_data)>::value, // in len
+				crypto::nonce.data(), // nonce
+				crypto::secret_key.data() // secret key
+			);
 		}
 		else {
 			// nothing. Just avoid warnings / deadcode optimize / unused
@@ -1049,6 +1062,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 }
 
 int main(int argc, const char **argv) {
+	crypto::init();
 	std::vector< std::string> options;
 	for (int i=1; i<argc; ++i) options.push_back(argv[i]);
 	for (const string & arg : options) if ((arg=="dbg")||(arg=="debug")||(arg=="d")) g_debug = true;
