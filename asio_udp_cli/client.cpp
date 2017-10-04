@@ -75,8 +75,9 @@ int main(int argc, char *argv[])
 			<< "\"" << std::endl;
 		std::cerr << endl;
 		// auto start_time = std::chrono::steady_clock::now();
+		auto buf = boost::asio::buffer(request, request_length);
 		for (size_t i=0; i<count; i++) {
-			s.send_to(boost::asio::buffer(request, request_length), endpoint);
+			s.send_to(buf, endpoint);
 			/*
 			double now_recv_ellapsed_sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_time) ).count() / 1000.;
 			double now_recv_speed = (i / now_recv_ellapsed_sec) / (1000.); // kpck/s
