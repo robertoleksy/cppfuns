@@ -660,7 +660,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	}
 	_note("TUNTAP: ios threads are running.");
 
-
 	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
 	_goal("All ios run are running");
 	std::this_thread::sleep_for( std::chrono::milliseconds(g_stage_sleep_time) );
@@ -710,7 +709,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	// --- welds var ---
 	vector<c_weld> welds;
 	std::mutex welds_mutex;
-
 
 	// stop / show stats
 	_goal("The stop thread"); // exit flag --> ios.stop()
@@ -839,7 +837,6 @@ void asiotest_udpserv(std::vector<std::string> options) {
 	}
 
 	vector<std::thread> tuntap_flow;
-
 
 	// tuntap: DO WORK
 	for (size_t tuntap_socket_nr=0; tuntap_socket_nr<cfg_num_socket_tuntap; ++tuntap_socket_nr) {
@@ -1009,7 +1006,7 @@ void asiotest_udpserv(std::vector<std::string> options) {
 			auto & this_socket_and_strand = wire_socket.at(socket_nr);
 
 			// [asioflow]
-			this_socket_and_strand.get_strand().post([&, inbuf_nr] {
+			this_socket_and_strand.get_strand().post([&inbuf_tab, &mutex_handlerflow_socket_wire,	&this_socket_and_strand, inbuf_nr, inbuf_asio] {
 				this_socket_and_strand.get_unsafe_assume_in_strand().get().async_receive_from( inbuf_asio , inbuf_tab.get(inbuf_nr).m_ep ,
 						[&this_socket_and_strand, &inbuf_tab , inbuf_nr, &mutex_handlerflow_socket_wire](const boost::system::error_code & ec, std::size_t bytes_transferred) {
 							_dbg1("Handler (FIRST), size="<<bytes_transferred);
@@ -1083,4 +1080,3 @@ int main(int argc, const char **argv) {
 	_goal("Normal exit");
 	return 0;
 }
-
