@@ -26,7 +26,7 @@ void server(boost::asio::io_service& io_service, unsigned short port)
 				boost::asio::buffer(data, max_length), sender_endpoint);
 		received_packets++;
 		received_bytes += length;
-		if (received_packets % 10000 == 0) {
+		if (received_packets % 100000 == 0) {
 			auto time_now = std::chrono::steady_clock::now();
 			double sec = ( std::chrono::duration_cast<std::chrono::milliseconds>(time_now - start_time) ).count() / 1000.;
 			std::cout << "Receive packages:" << received_packets
